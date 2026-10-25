@@ -51,9 +51,13 @@ fn sampled() -> Vec<Chunking> {
     v
 }
 
-fn invariance(only: Option<&str>) -> Value {
+fn invariance(only: Option<&str>, mode2027: bool) -> Value {
     let mut report = BTreeMap::new();
-    for (name, bytes) in fixtures(only) {
+    for (name, mut bytes) in fixtures(only) {
+        if mode2027 {
+            // Grapheme clustering (mode 2027) on from the first byte; cores without it ignore it.
+            bytes.splice(0..0, *b"\x1b[?2027h");
+        }
         let exhaustive = bytes.len() <= 16 * 1024;
         let mut strategies = sampled();
         if exhaustive {
@@ -185,6 +189,32 @@ fn hashes(only: Option<&str>, chunking: &str) -> Value {
     json!({ "chunking": c.label(), "fixtures": report })
 }
 
+/// Cursor advance each core gives a cluster on an empty line: the width disagreements behind
+/// the cross-core diffs. The clusters are the unicode-mix pieces plus a few edge cases.
+fn probe() -> Value {
+    const PIECES: &[&str] = &[
+        "日本語", "😀", "🎉", "👍🏽", "👨\u{200d}👩\u{200d}👧\u{200d}👦", "🏳\u{fe0f}\u{200d}🌈", "❤\u{fe0f}", "❤", "☺\u{fe0e}",
+        "e\u{301}", "a\u{308}\u{332}", "नमस्ते", "क्षत्रिय", "مرحبا", "ไทย", "─│┌┐", "½", "™", "\u{200b}", "ﬁ",
+        "𝓜𝓪𝓽𝓱", "🇳🇱", "🇯", "\u{1f469}\u{200d}\u{1f467}",
+    ];
+    let mut out = vec![];
+    for p in PIECES {
+        let mut row = serde_json::Map::new();
+        row.insert("cluster".into(), json!(p.escape_unicode().to_string()));
+        row.insert("text".into(), json!(p));
+        // Default modes, then with mode 2027 (grapheme clustering) requested first.
+        for (prefix, suffix) in [("", ""), ("\x1b[?2027h", " +2027")] {
+            for (name, make) in cores() {
+                let mut core = make();
+                core.write(format!("{prefix}\x1b[H\x1b[2J{p}").as_bytes());
+                row.insert(format!("{name}{suffix}"), json!(core.snapshot().cursor.0));
+            }
+        }
+        out.push(Value::Object(row));
+    }
+    json!(out)
+}
+
 fn median(v: &mut [f64]) -> f64 {
     v.sort_by(f64::total_cmp);
     v[v.len() / 2]
@@ -230,11 +260,13 @@ fn throughput(only: Option<&str>, trials: usize, chunk: usize) -> Value {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |f: &str| args.iter().position(|a| a == f).map(|i| args[i + 1].clone());
+    // `--mode2027` (invariance only) takes no value.
     let only = flag("--fixture");
     let only = only.as_deref();
     let out = match args.first().map(String::as_str) {
-        Some("invariance") => invariance(only),
+        Some("invariance") => invariance(only, args.iter().any(|a| a == "--mode2027")),
         Some("dump") => dump(only),
+        Some("probe") => probe(),
         Some("hashes") => hashes(only, &flag("--chunking").unwrap_or_else(|| "fixed-4096".into())),
         Some("diff") => diff(only, &flag("--core").expect("--core"), &flag("--chunking").expect("--chunking")),
         Some("throughput") => throughput(
@@ -243,7 +275,7 @@ fn main() {
             flag("--chunk").map_or(4096, |c| c.parse().unwrap()),
         ),
         _ => {
-            eprintln!("usage: glyphium-bakeoff invariance|dump|diff|hashes|throughput [--fixture NAME] [--trials N] [--chunk BYTES]");
+            eprintln!("usage: glyphium-bakeoff invariance|dump|diff|hashes|probe|throughput [--fixture NAME] [--trials N] [--chunk BYTES]");
             std::process::exit(2);
         }
     };

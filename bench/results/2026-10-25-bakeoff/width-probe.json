@@ -1,0 +1,242 @@
+[
+  {
+    "alacritty_terminal": 6,
+    "alacritty_terminal +2027": 6,
+    "cluster": "\\u{65e5}\\u{672c}\\u{8a9e}",
+    "libghostty-vt": 6,
+    "libghostty-vt +2027": 6,
+    "text": "日本語",
+    "wezterm-term": 6,
+    "wezterm-term +2027": 6
+  },
+  {
+    "alacritty_terminal": 2,
+    "alacritty_terminal +2027": 2,
+    "cluster": "\\u{1f600}",
+    "libghostty-vt": 2,
+    "libghostty-vt +2027": 2,
+    "text": "😀",
+    "wezterm-term": 2,
+    "wezterm-term +2027": 2
+  },
+  {
+    "alacritty_terminal": 2,
+    "alacritty_terminal +2027": 2,
+    "cluster": "\\u{1f389}",
+    "libghostty-vt": 2,
+    "libghostty-vt +2027": 2,
+    "text": "🎉",
+    "wezterm-term": 2,
+    "wezterm-term +2027": 2
+  },
+  {
+    "alacritty_terminal": 4,
+    "alacritty_terminal +2027": 4,
+    "cluster": "\\u{1f44d}\\u{1f3fd}",
+    "libghostty-vt": 4,
+    "libghostty-vt +2027": 2,
+    "text": "👍🏽",
+    "wezterm-term": 2,
+    "wezterm-term +2027": 2
+  },
+  {
+    "alacritty_terminal": 8,
+    "alacritty_terminal +2027": 8,
+    "cluster": "\\u{1f468}\\u{200d}\\u{1f469}\\u{200d}\\u{1f467}\\u{200d}\\u{1f466}",
+    "libghostty-vt": 8,
+    "libghostty-vt +2027": 2,
+    "text": "👨‍👩‍👧‍👦",
+    "wezterm-term": 2,
+    "wezterm-term +2027": 2
+  },
+  {
+    "alacritty_terminal": 3,
+    "alacritty_terminal +2027": 3,
+    "cluster": "\\u{1f3f3}\\u{fe0f}\\u{200d}\\u{1f308}",
+    "libghostty-vt": 3,
+    "libghostty-vt +2027": 2,
+    "text": "🏳️‍🌈",
+    "wezterm-term": 2,
+    "wezterm-term +2027": 2
+  },
+  {
+    "alacritty_terminal": 1,
+    "alacritty_terminal +2027": 1,
+    "cluster": "\\u{2764}\\u{fe0f}",
+    "libghostty-vt": 1,
+    "libghostty-vt +2027": 2,
+    "text": "❤️",
+    "wezterm-term": 1,
+    "wezterm-term +2027": 1
+  },
+  {
+    "alacritty_terminal": 1,
+    "alacritty_terminal +2027": 1,
+    "cluster": "\\u{2764}",
+    "libghostty-vt": 1,
+    "libghostty-vt +2027": 1,
+    "text": "❤",
+    "wezterm-term": 1,
+    "wezterm-term +2027": 1
+  },
+  {
+    "alacritty_terminal": 1,
+    "alacritty_terminal +2027": 1,
+    "cluster": "\\u{263a}\\u{fe0e}",
+    "libghostty-vt": 1,
+    "libghostty-vt +2027": 1,
+    "text": "☺︎",
+    "wezterm-term": 1,
+    "wezterm-term +2027": 1
+  },
+  {
+    "alacritty_terminal": 1,
+    "alacritty_terminal +2027": 1,
+    "cluster": "\\u{65}\\u{301}",
+    "libghostty-vt": 1,
+    "libghostty-vt +2027": 1,
+    "text": "é",
+    "wezterm-term": 1,
+    "wezterm-term +2027": 1
+  },
+  {
+    "alacritty_terminal": 1,
+    "alacritty_terminal +2027": 1,
+    "cluster": "\\u{61}\\u{308}\\u{332}",
+    "libghostty-vt": 1,
+    "libghostty-vt +2027": 1,
+    "text": "ä̲",
+    "wezterm-term": 1,
+    "wezterm-term +2027": 1
+  },
+  {
+    "alacritty_terminal": 4,
+    "alacritty_terminal +2027": 4,
+    "cluster": "\\u{928}\\u{92e}\\u{938}\\u{94d}\\u{924}\\u{947}",
+    "libghostty-vt": 4,
+    "libghostty-vt +2027": 4,
+    "text": "नमस्ते",
+    "wezterm-term": 4,
+    "wezterm-term +2027": 4
+  },
+  {
+    "alacritty_terminal": 6,
+    "alacritty_terminal +2027": 6,
+    "cluster": "\\u{915}\\u{94d}\\u{937}\\u{924}\\u{94d}\\u{930}\\u{93f}\\u{92f}",
+    "libghostty-vt": 6,
+    "libghostty-vt +2027": 5,
+    "text": "क्षत्रिय",
+    "wezterm-term": 5,
+    "wezterm-term +2027": 5
+  },
+  {
+    "alacritty_terminal": 5,
+    "alacritty_terminal +2027": 5,
+    "cluster": "\\u{645}\\u{631}\\u{62d}\\u{628}\\u{627}",
+    "libghostty-vt": 5,
+    "libghostty-vt +2027": 5,
+    "text": "مرحبا",
+    "wezterm-term": 5,
+    "wezterm-term +2027": 5
+  },
+  {
+    "alacritty_terminal": 3,
+    "alacritty_terminal +2027": 3,
+    "cluster": "\\u{e44}\\u{e17}\\u{e22}",
+    "libghostty-vt": 3,
+    "libghostty-vt +2027": 3,
+    "text": "ไทย",
+    "wezterm-term": 3,
+    "wezterm-term +2027": 3
+  },
+  {
+    "alacritty_terminal": 4,
+    "alacritty_terminal +2027": 4,
+    "cluster": "\\u{2500}\\u{2502}\\u{250c}\\u{2510}",
+    "libghostty-vt": 4,
+    "libghostty-vt +2027": 4,
+    "text": "─│┌┐",
+    "wezterm-term": 4,
+    "wezterm-term +2027": 4
+  },
+  {
+    "alacritty_terminal": 1,
+    "alacritty_terminal +2027": 1,
+    "cluster": "\\u{bd}",
+    "libghostty-vt": 1,
+    "libghostty-vt +2027": 1,
+    "text": "½",
+    "wezterm-term": 1,
+    "wezterm-term +2027": 1
+  },
+  {
+    "alacritty_terminal": 1,
+    "alacritty_terminal +2027": 1,
+    "cluster": "\\u{2122}",
+    "libghostty-vt": 1,
+    "libghostty-vt +2027": 1,
+    "text": "™",
+    "wezterm-term": 1,
+    "wezterm-term +2027": 1
+  },
+  {
+    "alacritty_terminal": 0,
+    "alacritty_terminal +2027": 0,
+    "cluster": "\\u{200b}",
+    "libghostty-vt": 0,
+    "libghostty-vt +2027": 0,
+    "text": "​",
+    "wezterm-term": 0,
+    "wezterm-term +2027": 0
+  },
+  {
+    "alacritty_terminal": 1,
+    "alacritty_terminal +2027": 1,
+    "cluster": "\\u{fb01}",
+    "libghostty-vt": 1,
+    "libghostty-vt +2027": 1,
+    "text": "ﬁ",
+    "wezterm-term": 1,
+    "wezterm-term +2027": 1
+  },
+  {
+    "alacritty_terminal": 4,
+    "alacritty_terminal +2027": 4,
+    "cluster": "\\u{1d4dc}\\u{1d4ea}\\u{1d4fd}\\u{1d4f1}",
+    "libghostty-vt": 4,
+    "libghostty-vt +2027": 4,
+    "text": "𝓜𝓪𝓽𝓱",
+    "wezterm-term": 4,
+    "wezterm-term +2027": 4
+  },
+  {
+    "alacritty_terminal": 2,
+    "alacritty_terminal +2027": 2,
+    "cluster": "\\u{1f1f3}\\u{1f1f1}",
+    "libghostty-vt": 4,
+    "libghostty-vt +2027": 2,
+    "text": "🇳🇱",
+    "wezterm-term": 2,
+    "wezterm-term +2027": 2
+  },
+  {
+    "alacritty_terminal": 1,
+    "alacritty_terminal +2027": 1,
+    "cluster": "\\u{1f1ef}",
+    "libghostty-vt": 2,
+    "libghostty-vt +2027": 2,
+    "text": "🇯",
+    "wezterm-term": 1,
+    "wezterm-term +2027": 1
+  },
+  {
+    "alacritty_terminal": 4,
+    "alacritty_terminal +2027": 4,
+    "cluster": "\\u{1f469}\\u{200d}\\u{1f467}",
+    "libghostty-vt": 4,
+    "libghostty-vt +2027": 2,
+    "text": "👩‍👧",
+    "wezterm-term": 2,
+    "wezterm-term +2027": 2
+  }
+]

@@ -1,0 +1,93 @@
+{
+  "unicode-mix": {
+    "bytes": 2440202,
+    "checkpoints": [
+      610050,
+      1220101,
+      1830151,
+      2440202
+    ],
+    "cores": {
+      "alacritty_terminal": {
+        "exhaustive_splits": false,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "afc66dcd6cad70fb0137b0d58cc8d40f3d2252e9e0b81ca2e05cc9ca75e6d3a9",
+          "edecf8b02f30366c40415f5004096f68c7033315196857e03779c0046597aaca",
+          "77a031329c1b5dc8f606b1476475b71315b8153aeb354463dfedc87297dfcd57",
+          "1a0a4779f35a4063d885a912e67be6cd45008cd92fc03cc9f4d9b9c1e5abf34d"
+        ],
+        "runs": 10
+      },
+      "libghostty-vt": {
+        "exhaustive_splits": false,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "c67952b4564b65be9b2959ad48a4726e98e659dcf56baa525a9d302d6adba95f",
+          "4f60c76efb0145fe441ef334a1c391b5dd468549efa314a0299b83df47739391",
+          "bec0da911d8c5dcab40aab8639cfcff1165aa84e2ad8d4361268c56ead66a1c4",
+          "c56fff42e21d2acbd2b2ed483186c7efc7934101c20002fa8113c07ca3b5234a"
+        ],
+        "runs": 10
+      },
+      "wezterm-term": {
+        "exhaustive_splits": false,
+        "failure_count": 10,
+        "failures": [
+          {
+            "chunking": "fixed-1",
+            "first_bad_checkpoint": 610050
+          },
+          {
+            "chunking": "fixed-2",
+            "first_bad_checkpoint": 610050
+          },
+          {
+            "chunking": "fixed-3",
+            "first_bad_checkpoint": 610050
+          },
+          {
+            "chunking": "fixed-7",
+            "first_bad_checkpoint": 610050
+          },
+          {
+            "chunking": "fixed-13",
+            "first_bad_checkpoint": 610050
+          },
+          {
+            "chunking": "fixed-4096",
+            "first_bad_checkpoint": 610050
+          },
+          {
+            "chunking": "random-1-max8192",
+            "first_bad_checkpoint": 610050
+          },
+          {
+            "chunking": "random-2-max8192",
+            "first_bad_checkpoint": 610050
+          },
+          {
+            "chunking": "random-3-max8192",
+            "first_bad_checkpoint": 610050
+          },
+          {
+            "chunking": "random-4-max16",
+            "first_bad_checkpoint": 610050
+          }
+        ],
+        "pass": false,
+        "reference_hashes": [
+          "390a5d702bc32c063fb2926337d536c50f6daf6d76f95c95624b067d05750073",
+          "8b8710c841821dc55ebf798372480c255ace838c60424ca592ac48cb834507dc",
+          "e42aee140a9d4767c4eb5cc0eb97d5bbe81a0f701dce6a4990bead4c6b6cf7a6",
+          "0199273da81e2b58a4f02078c4b210b70f62f6b8bb59ede51900051b80591c9d"
+        ],
+        "runs": 10
+      }
+    }
+  }
+}
