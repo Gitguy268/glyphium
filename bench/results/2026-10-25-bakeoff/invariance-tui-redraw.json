@@ -1,0 +1,52 @@
+{
+  "tui-redraw": {
+    "bytes": 11368178,
+    "checkpoints": [
+      2842044,
+      5684089,
+      8526133,
+      11368178
+    ],
+    "cores": {
+      "alacritty_terminal": {
+        "exhaustive_splits": false,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "1f8aee6f2a70415292110659c4c6bafea56ea8db647270d60b0dba18b30f4393",
+          "46ea6c90c30490b4186284b42f1dc3cedb2b0cf2805e803f5e1ad0a1baacb889",
+          "7cac04c5496eb3549b7e41d2126807a0aafe594e4cfbefce0db8ed48331a8345",
+          "228fdd8a4167d65c6c8d40081773fc886eba1ff167fe8b0fc00ed4b156f7217c"
+        ],
+        "runs": 10
+      },
+      "libghostty-vt": {
+        "exhaustive_splits": false,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "34af29a622bf558c2facf16a58fcba9a1addc6b84f2adc9c79368e539c4ad4bb",
+          "eb3e0d40de2763b1dc3db6ce0f1e9ba726ce1c334420e508595e85382f9cb24b",
+          "4e811963698833c26f29d109603e8cb68c722f1c8ed5fac229f7b5303f7d4a53",
+          "228fdd8a4167d65c6c8d40081773fc886eba1ff167fe8b0fc00ed4b156f7217c"
+        ],
+        "runs": 10
+      },
+      "wezterm-term": {
+        "exhaustive_splits": false,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "87114186c2887e30d188d706dbfaf747dea20087882484e02eb072880046fbed",
+          "50644dac0cefab2d3515d9f8f9fafb5608886f974b699b3146734873b00eaed3",
+          "7f08ef082e87f937b137fa12860babb6769b0386af7047a7b631de968676602c",
+          "86233f735db15238847365d3733b62f43392ab2c8a009081c55b4a15cac33507"
+        ],
+        "runs": 10
+      }
+    }
+  }
+}

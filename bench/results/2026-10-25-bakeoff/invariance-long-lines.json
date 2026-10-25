@@ -1,0 +1,52 @@
+{
+  "long-lines": {
+    "bytes": 8011200,
+    "checkpoints": [
+      2002800,
+      4005600,
+      6008400,
+      8011200
+    ],
+    "cores": {
+      "alacritty_terminal": {
+        "exhaustive_splits": false,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "a35c527fbdcfe778de97a64e7a3bb3ef82574379c5b9c749055988ae4e00f9b9",
+          "34d32015cbe01ad02be94ce2eb73c69ed4fe374a2251bf78c8e5bd455cfd10fe",
+          "8ec53f6f041832b7726ed1c992daaaeb1144c4b5d25d2ba0a9335593e826cfcd",
+          "5ecd0c133c64546085027ca1e27685a1ed4eb70ba09989edaa3524f712e3dd62"
+        ],
+        "runs": 10
+      },
+      "libghostty-vt": {
+        "exhaustive_splits": false,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "a35c527fbdcfe778de97a64e7a3bb3ef82574379c5b9c749055988ae4e00f9b9",
+          "34d32015cbe01ad02be94ce2eb73c69ed4fe374a2251bf78c8e5bd455cfd10fe",
+          "8ec53f6f041832b7726ed1c992daaaeb1144c4b5d25d2ba0a9335593e826cfcd",
+          "5ecd0c133c64546085027ca1e27685a1ed4eb70ba09989edaa3524f712e3dd62"
+        ],
+        "runs": 10
+      },
+      "wezterm-term": {
+        "exhaustive_splits": false,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "935c8ae04f969528799ce2c6f0bfe02093728d4d64e43ff479eff9a924460cee",
+          "6aca45354ced61f6208c2b82ad80b9c9000b57f28f4eabb9bfd4bb7151e421d6",
+          "9c0dba93e2e2336dad4da3b7f75d941a42faed21168fd620c7a2667add4a011f",
+          "8b74bf992b12c206f4ffe4a13b2c2818adf270fe0d71aed5275a6fd117aa4de7"
+        ],
+        "runs": 10
+      }
+    }
+  }
+}

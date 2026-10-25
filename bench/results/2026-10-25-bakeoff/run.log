@@ -1,0 +1,36 @@
+edge-cases   libghostty-vt       3435 runs, 0 failures, 2.6s
+edge-cases   alacritty_terminal  3435 runs, 6 failures, 9.4s
+edge-cases   wezterm-term        3435 runs, 78 failures, 3.3s
+ascii-flood  libghostty-vt       10 runs, 0 failures, 0.9s
+ascii-flood  alacritty_terminal  10 runs, 0 failures, 1.0s
+ascii-flood  wezterm-term        10 runs, 0 failures, 2.4s
+sgr-flood    libghostty-vt       10 runs, 0 failures, 1.4s
+sgr-flood    alacritty_terminal  10 runs, 0 failures, 1.3s
+sgr-flood    wezterm-term        10 runs, 0 failures, 3.1s
+unicode-mix  libghostty-vt       10 runs, 0 failures, 0.6s
+unicode-mix  alacritty_terminal  10 runs, 7 failures, 0.5s
+unicode-mix  wezterm-term        10 runs, 10 failures, 0.7s
+long-lines   libghostty-vt       10 runs, 0 failures, 1.1s
+long-lines   alacritty_terminal  10 runs, 0 failures, 2.5s
+long-lines   wezterm-term        10 runs, 0 failures, 6.5s
+tui-redraw   libghostty-vt       10 runs, 0 failures, 3.1s
+tui-redraw   alacritty_terminal  10 runs, 0 failures, 1.4s
+tui-redraw   wezterm-term        10 runs, 0 failures, 5.4s
+ascii-flood  libghostty-vt       native-hash MATCH    873.6 MB/s
+ascii-flood  alacritty_terminal  native-hash MATCH    147.1 MB/s
+ascii-flood  wezterm-term        native-hash MATCH     26.0 MB/s
+sgr-flood    libghostty-vt       native-hash MATCH    127.2 MB/s
+sgr-flood    alacritty_terminal  native-hash MATCH    134.8 MB/s
+sgr-flood    wezterm-term        native-hash MATCH     31.7 MB/s
+unicode-mix  libghostty-vt       native-hash MATCH    116.7 MB/s
+unicode-mix  alacritty_terminal  native-hash MATCH    131.7 MB/s
+unicode-mix  wezterm-term        native-hash MATCH     38.6 MB/s
+long-lines   libghostty-vt       native-hash MATCH   1151.0 MB/s
+long-lines   alacritty_terminal  native-hash MATCH    154.5 MB/s
+long-lines   wezterm-term        native-hash MATCH     27.6 MB/s
+tui-redraw   libghostty-vt       native-hash MATCH    137.8 MB/s
+tui-redraw   alacritty_terminal  native-hash MATCH    145.0 MB/s
+tui-redraw   wezterm-term        native-hash MATCH     18.1 MB/s
+edge-cases   libghostty-vt       native-hash MATCH     11.4 MB/s
+edge-cases   alacritty_terminal  native-hash MATCH     13.7 MB/s
+edge-cases   wezterm-term        native-hash MATCH      5.1 MB/s

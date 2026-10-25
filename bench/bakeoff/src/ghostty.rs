@@ -39,6 +39,10 @@ impl Ghostty {
             let cb: GhosttyTerminalWritePtyFn = Some(write_pty);
             check(ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_WRITE_PTY, cb.map_or(ptr::null(), |f| f as *const c_void)), "write_pty");
             check(ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES, &lines as *const usize as *const c_void), "scrollback");
+            // The default byte limit is reached first (about 565 lines of ascii-flood natively)
+            // and its page granularity differs between 64- and 32-bit builds. Remove it so the
+            // line limit governs, as it does for the other cores.
+            check(ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, ptr::null()), "scrollback bytes");
         }
         Self { term, replies }
     }

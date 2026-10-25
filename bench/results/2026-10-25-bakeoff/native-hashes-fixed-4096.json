@@ -1,0 +1,125 @@
+{
+  "chunking": "fixed-4096",
+  "fixtures": {
+    "ascii-flood": {
+      "alacritty_terminal": [
+        "f3687c2775c72823080ca4ea098028c8cb14dcd2d00b974e368b45b5f15d9abb",
+        "9a708359bfa30ab2eb83a7eef36768c1978ae0a8e157279d81ec9db7fcbd0362",
+        "73cd50f4803682c98922ac2305aaea76144ca417a60c9634e619bd17b92a2e2c",
+        "c48a1be0b4ae9622eca3bbd5a5111509138eef38ffe1f91152b43c94da5d2b6b"
+      ],
+      "libghostty-vt": [
+        "f3687c2775c72823080ca4ea098028c8cb14dcd2d00b974e368b45b5f15d9abb",
+        "9a708359bfa30ab2eb83a7eef36768c1978ae0a8e157279d81ec9db7fcbd0362",
+        "73cd50f4803682c98922ac2305aaea76144ca417a60c9634e619bd17b92a2e2c",
+        "c48a1be0b4ae9622eca3bbd5a5111509138eef38ffe1f91152b43c94da5d2b6b"
+      ],
+      "wezterm-term": [
+        "c8f6569c278851d8073f2cd5f9f07013dc6c2fd0280b7a52802786b868ad598d",
+        "2adb7d19cbd2c696eb281e436b2da76e6f778cab2d7cd99538b7df946cca654b",
+        "9a61d13d840e97a126e9a25160193af877dec5e764b9d44b2a48c597d31bda68",
+        "b169a477d55182bb7422478e2d65d6abbf54d79c02d80a7d3e472d1a176adf32"
+      ]
+    },
+    "edge-cases": {
+      "alacritty_terminal": [
+        "d8ec9b31e787a41a1fb7c05051fe629ed6fa4e442ba07015e402b8bdd510f833",
+        "f504d7681c0a15af461a6f0416a0a85e125cf2e698439d2101027aba019ba4c9",
+        "c965dd7dd22045e3be31056ff06f6a482241eb8937520f23157e034a38071d13",
+        "2c8b273062efc1cacbb3518b0a03a966f1920945ca5ad23c12e59b031c3f39c3"
+      ],
+      "libghostty-vt": [
+        "1c98ec10963c947d336897607d0e065b586c4042816edf7cef9a939fb631b0d3",
+        "aee6a0b9bada6e1b7ca10a097f9a18dce7e50f5a9a0bef2486cf6e8213e65f33",
+        "b063fc34649204f137242eb90153a27e62bf3b5164f9fb14f05a959c32d6dd08",
+        "79a448f9bf23feeba904e2dea89367164060abcc490f507b329ddd6b2aec4ad3"
+      ],
+      "wezterm-term": [
+        "6b5a21115d60793304b8bd226544f9652554b6bfc554cdad7e280c842ded5720",
+        "2cd7b9e3fffadfee1ac894b84060a4e8004dad879b87a0a021d3d0e90134438c",
+        "bdf2f63b80ec43e41eb825b1a4e55e7cd001e4aa92e5640101d4c8804989bdde",
+        "79c9a94ed86d14336a9afed136c9c079fdeffb037e0b8addc1b8743ec051aa8e"
+      ]
+    },
+    "long-lines": {
+      "alacritty_terminal": [
+        "a35c527fbdcfe778de97a64e7a3bb3ef82574379c5b9c749055988ae4e00f9b9",
+        "34d32015cbe01ad02be94ce2eb73c69ed4fe374a2251bf78c8e5bd455cfd10fe",
+        "8ec53f6f041832b7726ed1c992daaaeb1144c4b5d25d2ba0a9335593e826cfcd",
+        "5ecd0c133c64546085027ca1e27685a1ed4eb70ba09989edaa3524f712e3dd62"
+      ],
+      "libghostty-vt": [
+        "a35c527fbdcfe778de97a64e7a3bb3ef82574379c5b9c749055988ae4e00f9b9",
+        "34d32015cbe01ad02be94ce2eb73c69ed4fe374a2251bf78c8e5bd455cfd10fe",
+        "8ec53f6f041832b7726ed1c992daaaeb1144c4b5d25d2ba0a9335593e826cfcd",
+        "5ecd0c133c64546085027ca1e27685a1ed4eb70ba09989edaa3524f712e3dd62"
+      ],
+      "wezterm-term": [
+        "935c8ae04f969528799ce2c6f0bfe02093728d4d64e43ff479eff9a924460cee",
+        "6aca45354ced61f6208c2b82ad80b9c9000b57f28f4eabb9bfd4bb7151e421d6",
+        "9c0dba93e2e2336dad4da3b7f75d941a42faed21168fd620c7a2667add4a011f",
+        "8b74bf992b12c206f4ffe4a13b2c2818adf270fe0d71aed5275a6fd117aa4de7"
+      ]
+    },
+    "sgr-flood": {
+      "alacritty_terminal": [
+        "2f23c627c9d2e51c2329506005aea66882ac4e9318310aee81313fa6674a613f",
+        "2cd34cd0d94c8bef271667d40aea6d883f079129800748bfd2d6da90d45685e2",
+        "9b20f8fdd99561ce2643781cad1436fbde6e54f627e848d52ee6691af70175e0",
+        "06efdf16a02db313b548d838a326cf7428b7ea1e4b0cacd712664efd8f4d0686"
+      ],
+      "libghostty-vt": [
+        "2f23c627c9d2e51c2329506005aea66882ac4e9318310aee81313fa6674a613f",
+        "2cd34cd0d94c8bef271667d40aea6d883f079129800748bfd2d6da90d45685e2",
+        "9b20f8fdd99561ce2643781cad1436fbde6e54f627e848d52ee6691af70175e0",
+        "06efdf16a02db313b548d838a326cf7428b7ea1e4b0cacd712664efd8f4d0686"
+      ],
+      "wezterm-term": [
+        "22072a2153d7a90adea70f615452b87cef3d82be80bf56f647ca7b1f53d75c46",
+        "35defcc7dc649acbd8fd16680b80bed089bcbe5abf8dbcbfb9a5568c4b2eb64d",
+        "2672e60585d6e510fb4cd5458e1d1fc0c80065c5f965808706641f24af1cd464",
+        "a5a9c501df11c896ef07989eb7de56c1fd0c0926cf8ab58804749e73af045212"
+      ]
+    },
+    "tui-redraw": {
+      "alacritty_terminal": [
+        "1f8aee6f2a70415292110659c4c6bafea56ea8db647270d60b0dba18b30f4393",
+        "46ea6c90c30490b4186284b42f1dc3cedb2b0cf2805e803f5e1ad0a1baacb889",
+        "7cac04c5496eb3549b7e41d2126807a0aafe594e4cfbefce0db8ed48331a8345",
+        "228fdd8a4167d65c6c8d40081773fc886eba1ff167fe8b0fc00ed4b156f7217c"
+      ],
+      "libghostty-vt": [
+        "34af29a622bf558c2facf16a58fcba9a1addc6b84f2adc9c79368e539c4ad4bb",
+        "eb3e0d40de2763b1dc3db6ce0f1e9ba726ce1c334420e508595e85382f9cb24b",
+        "4e811963698833c26f29d109603e8cb68c722f1c8ed5fac229f7b5303f7d4a53",
+        "228fdd8a4167d65c6c8d40081773fc886eba1ff167fe8b0fc00ed4b156f7217c"
+      ],
+      "wezterm-term": [
+        "87114186c2887e30d188d706dbfaf747dea20087882484e02eb072880046fbed",
+        "50644dac0cefab2d3515d9f8f9fafb5608886f974b699b3146734873b00eaed3",
+        "7f08ef082e87f937b137fa12860babb6769b0386af7047a7b631de968676602c",
+        "86233f735db15238847365d3733b62f43392ab2c8a009081c55b4a15cac33507"
+      ]
+    },
+    "unicode-mix": {
+      "alacritty_terminal": [
+        "f18ea65156fb641a8181d2d259fec857c551adae8a3ecfd93d8655630d651193",
+        "d9db89971efeae86530c936ebb548cfb85c87ba58c51644fe24c32802d2e25fc",
+        "8b9beb72cde017fba64448e8a873cba66125b4a50afd87f794a8332f4359fc84",
+        "1a0a4779f35a4063d885a912e67be6cd45008cd92fc03cc9f4d9b9c1e5abf34d"
+      ],
+      "libghostty-vt": [
+        "8cd1c4f3d0650624cf4301bbf0cc2944c49156ede39a2a99618495634578be21",
+        "49d116fde234ff34a1edbb8136099cd6618decde2c75751e87d34226c2e83664",
+        "8f7ff6529b149d924b1d8671446f255430622735561181884f15d39575da8c00",
+        "e3d73f98613887602b27ab64299dcd8c82928bb30f8daf598cecceab06f7200f"
+      ],
+      "wezterm-term": [
+        "5b93ab4575ed0c0eac45b29d77c1fffc2872ad41deebc4e42b5ce47a1c900310",
+        "b30cc6b9392025cc047588b0561be747a8cadd180d3a3a9aa5f5d7102d1bf9e0",
+        "95ad70ecd47296c936d18b22bfd87781a7e9ae7dedb2c84d096468a4318b1642",
+        "f790374b876b2a56b6b50cbc29c8669bce28af41db466a4447519eaf6b54ae46"
+      ]
+    }
+  }
+}

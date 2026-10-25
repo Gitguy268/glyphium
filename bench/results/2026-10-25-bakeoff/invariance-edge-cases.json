@@ -1,0 +1,278 @@
+{
+  "edge-cases": {
+    "bytes": 3426,
+    "checkpoints": [
+      856,
+      1713,
+      2569,
+      3426
+    ],
+    "cores": {
+      "alacritty_terminal": {
+        "exhaustive_splits": true,
+        "failure_count": 6,
+        "failures": [
+          {
+            "chunking": "fixed-3",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "fixed-7",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-14",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-93",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-977",
+            "first_bad_checkpoint": 1713
+          },
+          {
+            "chunking": "split-1056",
+            "first_bad_checkpoint": 1713
+          }
+        ],
+        "pass": false,
+        "reference_hashes": [
+          "d8ec9b31e787a41a1fb7c05051fe629ed6fa4e442ba07015e402b8bdd510f833",
+          "f504d7681c0a15af461a6f0416a0a85e125cf2e698439d2101027aba019ba4c9",
+          "c965dd7dd22045e3be31056ff06f6a482241eb8937520f23157e034a38071d13",
+          "2c8b273062efc1cacbb3518b0a03a966f1920945ca5ad23c12e59b031c3f39c3"
+        ],
+        "runs": 3435
+      },
+      "libghostty-vt": {
+        "exhaustive_splits": true,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "1c98ec10963c947d336897607d0e065b586c4042816edf7cef9a939fb631b0d3",
+          "aee6a0b9bada6e1b7ca10a097f9a18dce7e50f5a9a0bef2486cf6e8213e65f33",
+          "b063fc34649204f137242eb90153a27e62bf3b5164f9fb14f05a959c32d6dd08",
+          "79a448f9bf23feeba904e2dea89367164060abcc490f507b329ddd6b2aec4ad3"
+        ],
+        "runs": 3435
+      },
+      "wezterm-term": {
+        "exhaustive_splits": true,
+        "failure_count": 78,
+        "failures": [
+          {
+            "chunking": "fixed-1",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "fixed-2",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "fixed-3",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "fixed-7",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "fixed-13",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "random-4-max16",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-32",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-33",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-34",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-35",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-36",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-37",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-38",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-44",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-45",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-46",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-47",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-48",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-49",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-50",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-51",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-52",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-53",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-54",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-55",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-56",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-57",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-58",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-59",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-60",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-61",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-62",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-63",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-64",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-98",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-99",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-100",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-101",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-102",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-103",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-801",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-802",
+            "first_bad_checkpoint": 856
+          },
+          {
+            "chunking": "split-995",
+            "first_bad_checkpoint": 1713
+          },
+          {
+            "chunking": "split-996",
+            "first_bad_checkpoint": 1713
+          },
+          {
+            "chunking": "split-997",
+            "first_bad_checkpoint": 1713
+          },
+          {
+            "chunking": "split-998",
+            "first_bad_checkpoint": 1713
+          },
+          {
+            "chunking": "split-999",
+            "first_bad_checkpoint": 1713
+          },
+          {
+            "chunking": "split-1000",
+            "first_bad_checkpoint": 1713
+          },
+          {
+            "chunking": "split-1001",
+            "first_bad_checkpoint": 1713
+          },
+          {
+            "chunking": "split-1007",
+            "first_bad_checkpoint": 1713
+          }
+        ],
+        "pass": false,
+        "reference_hashes": [
+          "6b5a21115d60793304b8bd226544f9652554b6bfc554cdad7e280c842ded5720",
+          "2cd7b9e3fffadfee1ac894b84060a4e8004dad879b87a0a021d3d0e90134438c",
+          "bdf2f63b80ec43e41eb825b1a4e55e7cd001e4aa92e5640101d4c8804989bdde",
+          "79c9a94ed86d14336a9afed136c9c079fdeffb037e0b8addc1b8743ec051aa8e"
+        ],
+        "runs": 3435
+      }
+    }
+  }
+}
