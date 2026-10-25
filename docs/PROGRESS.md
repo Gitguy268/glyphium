@@ -35,3 +35,29 @@ Next (M1): adapter trait and a final-state hash for the three cores; chunk-invar
   - 20 trials after 3 warmups, randomized order, 4 KiB chunks. Medians: 25 MB/s ASCII, 25–30 MB/s long lines, 20–22 MB/s TUI redraw, 16–18 MB/s Unicode, **3.4–3.6 MB/s truecolor SGR**, with 83 ms median frame gaps (the main thread is blocked while parsing).
   - Caveat: Zig/Ghostty/cargo downloads ran during this run. Re-run alongside Glyphium before any comparison is claimed.
 - **xterm.js 6.0.0 bug found:** when a `Uint8Array` write ends after the 2nd of the 3 UTF-8 bytes of U+200D (ZWJ), the ZWJ is dropped (`👩‍👧` becomes `👩👧`). Splits at other bytes are fine, and so is the string path TabShell uses (`TextDecoder` with `stream: true`). So the TabShell backlog item "pass Uint8Array straight to term.write" must not ship on 6.0.0. Reporting it upstream is outward-facing, so ask the user first.
+
+## 2026-10-26: M1 core bake-off (ADR 0001 proposed)
+
+Result: **libghostty-vt proposed** (`docs/adr/0001-core.md`, status Proposed). It adds Zig to the toolchain, so the user signs off before M2 builds on it.
+- Ghostty commit: `cec8b92f1ecd176a20a56aa405021e7ae991b996`. Builds: `.tools/ghostty/zig-out` (native ReleaseFast), `zig-out-wasm` (wasm32 ReleaseSmall), `zig-out-wasm-interactive` (size check only).
+- `bench/bakeoff`: one `Core` trait over the three cores, with these commands:
+  - `invariance [--mode2027]`
+  - `dump`
+  - `diff --core X --chunking split-N`
+  - `hashes`
+  - `probe`
+  - `throughput`
+- `bench/bakeoff/build-wasm.sh` makes one wasm build per core. `bench/web/run-bakeoff.mjs` runs them in a Web Worker and compares the hashes with native.
+- Fixture `edge-cases` added (3.4 KB, split at every byte). MANIFEST updated.
+- Vendored and patched in `third_party/` (see its README):
+  - alacritty_terminal: wasm32 gating;
+  - termwiz and wezterm-escape-parser: wasm32;
+  - wezterm-term: synchronous replies;
+  - vte 0.15.0: split-UTF-8 fix, alacritty/vte#159, already known upstream, so nothing to report.
+- Findings:
+  - Ghostty passes every invariance run, with mode 2027 off and on.
+  - Native and wasm hashes are identical for all three cores.
+  - wezterm-term breaks grapheme clusters split across writes.
+  - Ghostty's default scrollback byte limit kept only about 565 lines, so the adapter removes it.
+- Not done: vttest (moves to M2), Windows Zig CI, and a throughput re-run on an idle machine (load average was about 5).
+- Disk ran out once during this session (1 GB free). `target/` regrows to about 2–3 GB. `bench/results/2026-10-25-bakeoff/invariance-big.log` is a stale, untracked log from the pre-fix run.
