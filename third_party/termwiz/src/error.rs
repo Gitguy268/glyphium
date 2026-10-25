@@ -63,6 +63,7 @@ pub enum InternalError {
     #[error(transparent)]
     Anyhow(#[from] anyhow::Error),
 
+    // Glyphium patch: these error sources do not exist on wasm.
     #[error(transparent)]
     #[cfg(not(target_family = "wasm"))]
     Terminfo(#[from] terminfo::Error),

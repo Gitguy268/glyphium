@@ -8,6 +8,7 @@ Each crate was committed unmodified first, then patched in a separate commit, so
 | `termwiz` | wezterm/wezterm `e2a98e1b` | MIT | wasm32 build, used by `wezterm-term` |
 | `wezterm-escape-parser` | wezterm/wezterm `e2a98e1b` | MIT | wasm32 build with the `kitty-shm` feature on |
 | `wezterm-term` | wezterm/wezterm `e2a98e1b` | MIT | wasm32 build (no threads) and deterministic replies |
+| `vte` | crates.io 0.15.0 | MIT OR Apache-2.0 | split UTF-8 bug fix (used by alacritty_terminal) |
 
 ## Patches (M1 bake-off gate: patch size)
 
@@ -18,6 +19,10 @@ All patches only gate OS-specific code behind `cfg(not(target_family = "wasm"))`
 - **wezterm-escape-parser** (11 lines of code; manifest rewritten the same way): `nix` moves to `cfg(unix)`; a stub `read_shared_memory_data` returns `Unsupported` on targets with neither POSIX nor Win32 shared memory.
 
 - **wezterm-term** (code: one struct replaced; manifest rewritten the same way): upstream sends replies to the PTY writer through a background thread (`ThreadedWriter`), so writes never block. wasm32 cannot spawn threads (it panics in `Terminal::new`), and on native the thread makes reply delivery race the state snapshot. The patch writes replies synchronously. This is not a state change: it moves the non-blocking write out of the core and into Glyphium's session layer. Before the patch, the native edge-case gate showed 445 failures; 367 of them were this race.
+
+- **vte** (1 line): in `advance_partial_utf8`, consume only the completed character (`c.len_utf8() - old_bytes`). Upstream consumes `valid_bytes - old_bytes`, which also swallows any further valid bytes in the 4-byte buffer: a write ending inside `é` loses the character after it. Reported upstream as alacritty/vte#159 (closed 2026-09-01 without a merged fix; PR #162 closed unmerged 2026-10-18).
+
+Each patched source location is marked with a `Glyphium patch` comment.
 
 `/.cargo/config.toml` sets `getrandom_backend="wasm_js"` for wasm32, needed by `getrandom` 0.3 through `wezterm-blob-leases`.
 

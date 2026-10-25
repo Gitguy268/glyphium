@@ -40,6 +40,7 @@
 //! * `widgets` - enables the widget layout and related traits
 //! * `use_serde` - makes a number of structs serde serializable
 
+// Glyphium patch: tty, terminfo and rendering modules are left out on wasm.
 #[cfg(not(target_family = "wasm"))]
 pub mod caps;
 pub use wezterm_cell as cell;

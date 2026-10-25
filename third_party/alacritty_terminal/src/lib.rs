@@ -5,6 +5,7 @@
 #![cfg_attr(clippy, deny(warnings))]
 
 pub mod event;
+// Glyphium patch: PTY, thread and event-loop modules are left out on wasm.
 #[cfg(not(target_family = "wasm"))]
 pub mod event_loop;
 pub mod grid;
