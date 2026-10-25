@@ -1,0 +1,26 @@
+{
+  "long-lines": {
+    "bytes": 8011200,
+    "checkpoints": [
+      2002800,
+      4005600,
+      6008400,
+      8011200
+    ],
+    "cores": {
+      "alacritty_terminal": {
+        "exhaustive_splits": false,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "a35c527fbdcfe778de97a64e7a3bb3ef82574379c5b9c749055988ae4e00f9b9",
+          "34d32015cbe01ad02be94ce2eb73c69ed4fe374a2251bf78c8e5bd455cfd10fe",
+          "8ec53f6f041832b7726ed1c992daaaeb1144c4b5d25d2ba0a9335593e826cfcd",
+          "5ecd0c133c64546085027ca1e27685a1ed4eb70ba09989edaa3524f712e3dd62"
+        ],
+        "runs": 10
+      }
+    }
+  }
+}

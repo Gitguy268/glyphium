@@ -1,0 +1,26 @@
+{
+  "sgr-flood": {
+    "bytes": 9920785,
+    "checkpoints": [
+      2480196,
+      4960392,
+      7440588,
+      9920785
+    ],
+    "cores": {
+      "alacritty_terminal": {
+        "exhaustive_splits": false,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "2f23c627c9d2e51c2329506005aea66882ac4e9318310aee81313fa6674a613f",
+          "2cd34cd0d94c8bef271667d40aea6d883f079129800748bfd2d6da90d45685e2",
+          "9b20f8fdd99561ce2643781cad1436fbde6e54f627e848d52ee6691af70175e0",
+          "06efdf16a02db313b548d838a326cf7428b7ea1e4b0cacd712664efd8f4d0686"
+        ],
+        "runs": 10
+      }
+    }
+  }
+}

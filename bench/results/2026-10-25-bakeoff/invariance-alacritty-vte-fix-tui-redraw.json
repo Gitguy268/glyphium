@@ -1,0 +1,26 @@
+{
+  "tui-redraw": {
+    "bytes": 11368178,
+    "checkpoints": [
+      2842044,
+      5684089,
+      8526133,
+      11368178
+    ],
+    "cores": {
+      "alacritty_terminal": {
+        "exhaustive_splits": false,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "1f8aee6f2a70415292110659c4c6bafea56ea8db647270d60b0dba18b30f4393",
+          "46ea6c90c30490b4186284b42f1dc3cedb2b0cf2805e803f5e1ad0a1baacb889",
+          "7cac04c5496eb3549b7e41d2126807a0aafe594e4cfbefce0db8ed48331a8345",
+          "228fdd8a4167d65c6c8d40081773fc886eba1ff167fe8b0fc00ed4b156f7217c"
+        ],
+        "runs": 10
+      }
+    }
+  }
+}

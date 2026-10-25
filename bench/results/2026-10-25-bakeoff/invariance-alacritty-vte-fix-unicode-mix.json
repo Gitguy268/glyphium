@@ -1,0 +1,26 @@
+{
+  "unicode-mix": {
+    "bytes": 2440194,
+    "checkpoints": [
+      610048,
+      1220097,
+      1830145,
+      2440194
+    ],
+    "cores": {
+      "alacritty_terminal": {
+        "exhaustive_splits": false,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "5372e093229a3ca676186eba6e252b138b59f341f3ddb83a1ce68992d44eb575",
+          "d9db89971efeae86530c936ebb548cfb85c87ba58c51644fe24c32802d2e25fc",
+          "8b9beb72cde017fba64448e8a873cba66125b4a50afd87f794a8332f4359fc84",
+          "1a0a4779f35a4063d885a912e67be6cd45008cd92fc03cc9f4d9b9c1e5abf34d"
+        ],
+        "runs": 10
+      }
+    }
+  }
+}

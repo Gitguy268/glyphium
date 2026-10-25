@@ -1,0 +1,26 @@
+{
+  "edge-cases": {
+    "bytes": 3426,
+    "checkpoints": [
+      856,
+      1713,
+      2569,
+      3426
+    ],
+    "cores": {
+      "alacritty_terminal": {
+        "exhaustive_splits": true,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "d8ec9b31e787a41a1fb7c05051fe629ed6fa4e442ba07015e402b8bdd510f833",
+          "f504d7681c0a15af461a6f0416a0a85e125cf2e698439d2101027aba019ba4c9",
+          "c965dd7dd22045e3be31056ff06f6a482241eb8937520f23157e034a38071d13",
+          "2c8b273062efc1cacbb3518b0a03a966f1920945ca5ad23c12e59b031c3f39c3"
+        ],
+        "runs": 3435
+      }
+    }
+  }
+}

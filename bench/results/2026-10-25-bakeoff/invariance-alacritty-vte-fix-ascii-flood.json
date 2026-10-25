@@ -1,0 +1,26 @@
+{
+  "ascii-flood": {
+    "bytes": 7750773,
+    "checkpoints": [
+      1937693,
+      3875386,
+      5813079,
+      7750773
+    ],
+    "cores": {
+      "alacritty_terminal": {
+        "exhaustive_splits": false,
+        "failure_count": 0,
+        "failures": [],
+        "pass": true,
+        "reference_hashes": [
+          "f3687c2775c72823080ca4ea098028c8cb14dcd2d00b974e368b45b5f15d9abb",
+          "9a708359bfa30ab2eb83a7eef36768c1978ae0a8e157279d81ec9db7fcbd0362",
+          "73cd50f4803682c98922ac2305aaea76144ca417a60c9634e619bd17b92a2e2c",
+          "c48a1be0b4ae9622eca3bbd5a5111509138eef38ffe1f91152b43c94da5d2b6b"
+        ],
+        "runs": 10
+      }
+    }
+  }
+}

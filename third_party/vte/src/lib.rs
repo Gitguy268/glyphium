@@ -698,7 +698,10 @@ impl<const OSC_RAW_BUF_SIZE: usize> Parser<OSC_RAW_BUF_SIZE> {
                     performer.print(c);
 
                     self.partial_utf8_len = 0;
-                    return valid_bytes - old_bytes;
+                    // Glyphium patch: consume only the completed character. Upstream returns
+                    // `valid_bytes - old_bytes`, which also swallows any further valid bytes
+                    // copied into the buffer (alacritty/vte#159).
+                    return c.len_utf8() - old_bytes;
                 }
 
                 match err.error_len() {
