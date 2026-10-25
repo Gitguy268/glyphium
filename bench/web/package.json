@@ -1,0 +1,15 @@
+{
+  "name": "glyphium-web-bench",
+  "private": true,
+  "type": "module",
+  "description": "Browser benchmarks: xterm.js baseline (TabShell's pinned versions) and Glyphium's web client",
+  "license": "MIT",
+  "scripts": {
+    "baseline": "node run-baseline.mjs"
+  },
+  "devDependencies": {
+    "@xterm/addon-webgl": "0.19.0",
+    "@xterm/xterm": "6.0.0",
+    "playwright": "1.63.0"
+  }
+}

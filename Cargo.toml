@@ -1,0 +1,11 @@
+[workspace]
+resolver = "3"
+members = ["bench/fixtures", "bench/bakeoff"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+authors = ["Lucas Van De Weerd"]
+
+[profile.release]
+debug = 1

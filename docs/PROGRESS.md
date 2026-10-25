@@ -27,3 +27,11 @@ Next (M0):
 2. TabShell baseline: xterm.js 6.0.0 + WebGL addon 0.19.0 installed here in `bench/web-baseline` (do not touch `~/tabshell`); measure parse and render throughput in headless Chromium; save the environment manifest and raw results.
 
 Next (M1): adapter trait and a final-state hash for the three cores; chunk-invariance, native throughput, wasm32 build in a Web Worker, sizes; then `docs/adr/0001-core.md`.
+
+## 2026-10-25: M0 baseline
+
+- `cargo run --release -p glyphium-fixtures` writes 5 deterministic fixtures (2.4–11.4 MB). `fixtures/MANIFEST.txt` holds their SHA-256; two runs produced identical bytes.
+- `bench/web`: xterm.js 6.0.0 + WebGL 0.19.0 with TabShell's options, in Playwright Chromium 153 (headless, ANGLE Metal on the M4). `npm run baseline` → `bench/results/2026-10-25-xterm-baseline/`.
+  - 20 trials after 3 warmups, randomized order, 4 KiB chunks. Medians: 25 MB/s ASCII, 25–30 MB/s long lines, 20–22 MB/s TUI redraw, 16–18 MB/s Unicode, **3.4–3.6 MB/s truecolor SGR**, with 83 ms median frame gaps (the main thread is blocked while parsing).
+  - Caveat: Zig/Ghostty/cargo downloads ran during this run. Re-run alongside Glyphium before any comparison is claimed.
+- **xterm.js 6.0.0 bug found:** when a `Uint8Array` write ends after the 2nd of the 3 UTF-8 bytes of U+200D (ZWJ), the ZWJ is dropped (`👩‍👧` becomes `👩👧`). Splits at other bytes are fine, and so is the string path TabShell uses (`TextDecoder` with `stream: true`). So the TabShell backlog item "pass Uint8Array straight to term.write" must not ship on 6.0.0. Reporting it upstream is outward-facing, so ask the user first.
