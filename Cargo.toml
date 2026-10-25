@@ -9,3 +9,11 @@ authors = ["Lucas Van De Weerd"]
 
 [profile.release]
 debug = 1
+
+# Vendored with a small wasm32 patch; see third_party/README.md.
+[patch.crates-io]
+alacritty_terminal = { path = "third_party/alacritty_terminal" }
+
+[patch."https://github.com/wezterm/wezterm.git"]
+termwiz = { path = "third_party/termwiz" }
+wezterm-escape-parser = { path = "third_party/wezterm-escape-parser" }

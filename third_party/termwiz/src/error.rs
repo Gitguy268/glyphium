@@ -64,9 +64,11 @@ pub enum InternalError {
     Anyhow(#[from] anyhow::Error),
 
     #[error(transparent)]
+    #[cfg(not(target_family = "wasm"))]
     Terminfo(#[from] terminfo::Error),
 
     #[error(transparent)]
+    #[cfg(not(target_family = "wasm"))]
     FileDescriptor(#[from] filedescriptor::Error),
 
     #[cfg(feature = "use_image")]

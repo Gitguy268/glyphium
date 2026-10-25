@@ -317,6 +317,17 @@ fn read_shared_memory_data(
     Err(std::io::ErrorKind::Unsupported.into())
 }
 
+// Glyphium patch: targets without POSIX or Win32 shared memory (wasm32) reject
+// shared-memory image transfers instead of failing to build.
+#[cfg(all(feature = "kitty-shm", not(any(unix, windows))))]
+fn read_shared_memory_data(
+    _name: &str,
+    _data_offset: Option<u32>,
+    _data_size: Option<u32>,
+) -> std::io::Result<Vec<u8>> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
 #[cfg(all(feature = "kitty-shm", windows))]
 mod win {
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};

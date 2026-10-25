@@ -40,6 +40,7 @@
 //! * `widgets` - enables the widget layout and related traits
 //! * `use_serde` - makes a number of structs serde serializable
 
+#[cfg(not(target_family = "wasm"))]
 pub mod caps;
 pub use wezterm_cell as cell;
 pub use wezterm_cell::color;
@@ -49,18 +50,22 @@ pub mod error;
 pub use wezterm_cell::image;
 pub use wezterm_surface::hyperlink;
 pub mod input;
+#[cfg(not(target_family = "wasm"))]
 pub mod istty;
 pub mod keymap;
+#[cfg(not(target_family = "wasm"))]
 pub mod lineedit;
 mod macros;
 pub use wezterm_char_props::nerdfonts;
 mod readbuf;
+#[cfg(not(target_family = "wasm"))]
 pub mod render;
 pub use wezterm_surface as surface;
+#[cfg(not(target_family = "wasm"))]
 pub mod terminal;
 #[cfg(feature = "tmux_cc")]
 pub use wezterm_escape_parser::tmux_cc;
-#[cfg(feature = "widgets")]
+#[cfg(all(feature = "widgets", not(target_family = "wasm")))]
 pub mod widgets;
 
 pub use error::{Context, Error, Result};

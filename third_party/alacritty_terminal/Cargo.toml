@@ -43,30 +43,17 @@ serde = [
 name = "alacritty_terminal"
 path = "src/lib.rs"
 
-[[test]]
-name = "ref"
-path = "tests/ref.rs"
-
 [dependencies.base64]
 version = "0.22.0"
 
 [dependencies.bitflags]
 version = "2.4.1"
 
-[dependencies.home]
-version = "0.5.5"
-
-[dependencies.libc]
-version = "0.2"
-
 [dependencies.log]
 version = "0.4"
 
 [dependencies.parking_lot]
 version = "0.12.0"
-
-[dependencies.polling]
-version = "3.8.0"
 
 [dependencies.regex-automata]
 version = "0.4.3"
@@ -89,6 +76,16 @@ features = [
     "ansi",
 ]
 default-features = false
+
+# Glyphium patch: PTY/event-loop dependencies only off the web.
+[target.'cfg(not(target_family = "wasm"))'.dependencies.home]
+version = "0.5.5"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies.libc]
+version = "0.2"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies.polling]
+version = "3.8.0"
 
 [dev-dependencies.serde_json]
 version = "1.0.0"

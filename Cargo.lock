@@ -26,8 +26,6 @@ dependencies = [
 [[package]]
 name = "alacritty_terminal"
 version = "0.26.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bda177466b9524d59f1b12f0dd30b68696788e9992a7e959021c4a0ed96fcf59"
 dependencies = [
  "base64",
  "bitflags 2.13.2",
@@ -598,9 +596,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -629,8 +629,10 @@ name = "glyphium-bakeoff"
 version = "0.0.0"
 dependencies = [
  "alacritty_terminal",
+ "getrandom 0.3.4",
  "sha2",
  "termwiz",
+ "uuid",
  "wezterm-term",
 ]
 
@@ -1865,7 +1867,6 @@ dependencies = [
 [[package]]
 name = "termwiz"
 version = "0.24.0"
-source = "git+https://github.com/wezterm/wezterm.git?rev=e2a98e1b8af156988ad0ac778658ac27b60a55fb#e2a98e1b8af156988ad0ac778658ac27b60a55fb"
 dependencies = [
  "anyhow",
  "bitflags 2.13.2",
@@ -2213,7 +2214,6 @@ dependencies = [
 [[package]]
 name = "wezterm-escape-parser"
 version = "0.1.0"
-source = "git+https://github.com/wezterm/wezterm.git?rev=e2a98e1b8af156988ad0ac778658ac27b60a55fb#e2a98e1b8af156988ad0ac778658ac27b60a55fb"
 dependencies = [
  "base64",
  "bitflags 2.13.2",
