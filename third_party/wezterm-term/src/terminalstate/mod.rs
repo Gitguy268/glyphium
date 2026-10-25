@@ -10,7 +10,7 @@ use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::io::{BufWriter, Write};
 use std::num::NonZeroUsize;
-use std::sync::mpsc::{channel, Sender};
+// Glyphium patch: mpsc import removed with the writer thread.
 use std::sync::Arc;
 use terminfo::{Database, Value};
 use termwiz::input::KeyboardEncoding;
@@ -457,53 +457,24 @@ fn default_color_map() -> HashMap<u16, RgbColor> {
 /// back-pressure when there is a lot of data to read,
 /// and we're in control of the write side, which represents
 /// input from the interactive user, or pastes.
-struct ThreadedWriter {
-    sender: Sender<WriterMessage>,
-}
-
-enum WriterMessage {
-    Data(Vec<u8>),
-    Flush,
-}
+// Glyphium patch: write replies synchronously instead of through a writer thread. wasm32 has
+// no threads, and the bake-off needs every reply delivered before the state is snapshotted.
+// Glyphium's session layer owns non-blocking PTY writes instead.
+struct ThreadedWriter(Box<dyn std::io::Write + Send>);
 
 impl ThreadedWriter {
-    fn new(mut writer: Box<dyn std::io::Write + Send>) -> Self {
-        let (sender, receiver) = channel::<WriterMessage>();
-
-        std::thread::spawn(move || {
-            while let Ok(msg) = receiver.recv() {
-                match msg {
-                    WriterMessage::Data(buf) => {
-                        if writer.write(&buf).is_err() {
-                            break;
-                        }
-                    }
-                    WriterMessage::Flush => {
-                        if writer.flush().is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-        });
-
-        Self { sender }
+    fn new(writer: Box<dyn std::io::Write + Send>) -> Self {
+        Self(writer)
     }
 }
 
 impl std::io::Write for ThreadedWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.sender
-            .send(WriterMessage::Data(buf.to_vec()))
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::BrokenPipe, err))?;
-        Ok(buf.len())
+        self.0.write(buf)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.sender
-            .send(WriterMessage::Flush)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::BrokenPipe, err))?;
-        Ok(())
+        self.0.flush()
     }
 }
 

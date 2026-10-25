@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Glyphium core bake-off</title>
+<script type="module">
+  // Each case gets a fresh worker, so cores never share a heap or a JIT warm-up.
+  window.bench = {
+    run: args => new Promise(resolve => {
+      const w = new Worker("./bakeoff-worker.js", { type: "module" });
+      w.onmessage = e => { w.terminate(); resolve(e.data); };
+      w.onerror = e => { w.terminate(); resolve({ ok: false, ...args, error: e.message }); };
+      w.postMessage(args);
+    }),
+    ready: true,
+  };
+</script>

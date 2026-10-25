@@ -10,6 +10,15 @@ authors = ["Lucas Van De Weerd"]
 [profile.release]
 debug = 1
 
+# Size builds for the wasm gate: the same settings for every core.
+[profile.wasm-size]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+debug = 0
+panic = "abort"
+
 # Vendored with a small wasm32 patch; see third_party/README.md.
 [patch.crates-io]
 alacritty_terminal = { path = "third_party/alacritty_terminal" }
@@ -17,3 +26,4 @@ alacritty_terminal = { path = "third_party/alacritty_terminal" }
 [patch."https://github.com/wezterm/wezterm.git"]
 termwiz = { path = "third_party/termwiz" }
 wezterm-escape-parser = { path = "third_party/wezterm-escape-parser" }
+wezterm-term = { path = "third_party/wezterm-term" }

@@ -6,18 +6,27 @@ edition.workspace = true
 license.workspace = true
 description = "M1 core bake-off: libghostty-vt vs alacritty_terminal vs wezterm-term on identical fixtures"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [features]
 default = ["alacritty", "wezterm", "ghostty"]
 alacritty = ["dep:alacritty_terminal"]
 wezterm = ["dep:wezterm-term", "dep:termwiz"]
-ghostty = []
+ghostty = ["dep:bindgen"]
 
 [dependencies]
 alacritty_terminal = { version = "=0.26.0", optional = true, default-features = false }
 wezterm-term = { git = "https://github.com/wezterm/wezterm.git", rev = "e2a98e1b8af156988ad0ac778658ac27b60a55fb", optional = true }
 termwiz = { git = "https://github.com/wezterm/wezterm.git", rev = "e2a98e1b8af156988ad0ac778658ac27b60a55fb", optional = true }
 sha2 = "0.10"
+serde_json = "1"
+
+[build-dependencies]
+bindgen = { version = "0.72", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 uuid = { version = "1", features = ["js"] }
+# Must match the wasm-bindgen CLI version.
+wasm-bindgen = "=0.2.129"

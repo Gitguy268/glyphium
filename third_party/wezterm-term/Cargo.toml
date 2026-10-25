@@ -14,34 +14,27 @@ readme = "README.md"
 use_serde = ["termwiz/use_serde", "wezterm-cell/use_serde", "wezterm-escape-parser/use_serde", "wezterm-surface/use_serde"]
 
 [dependencies]
-anyhow.workspace = true
-bitflags.workspace = true
-csscolorparser.workspace = true
-downcast-rs.workspace = true
-finl_unicode.workspace = true
-hex.workspace = true
-humansize.workspace = true
-image.workspace = true
-lazy_static.workspace = true
-log.workspace = true
-lru.workspace = true
-miniz_oxide.workspace = true
-num-traits.workspace = true
-ordered-float.workspace = true
-serde = {workspace=true, features = ["rc"]}
-terminfo.workspace = true
-unicode-normalization.workspace = true
-url.workspace = true
-wezterm-bidi.workspace = true
-wezterm-dynamic = {workspace = true, features=["std"]}
-wezterm-cell = {workspace = true, features=["std", "use_image"]}
-wezterm-escape-parser = {workspace = true, features=["std", "use_image"]}
-wezterm-surface = {workspace = true, features=["std", "appdata", "use_image"]}
-
-[dev-dependencies]
-env_logger.workspace = true
-k9.workspace = true
-
-[dependencies.termwiz]
-workspace = true
-features = ["use_image"]
+anyhow = "1.0"
+bitflags = "1.3"
+csscolorparser = "0.6"
+downcast-rs = "1.0"
+finl_unicode = { version = "1.3", git = "https://github.com/wez/finl_unicode.git", branch = "no_std", default-features = false, features = ["categories", "grapheme_clusters"] }
+hex = { version = "0.4", default-features = false }
+humansize = "2.1"
+image = "0.25"
+lazy_static = "1.4"
+log = "0.4"
+lru = "0.16"
+miniz_oxide = "0.7"
+num-traits = { version = "0.2", default-features = false }
+ordered-float = { version = "4.1", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive", "rc"] }
+terminfo = "0.9"
+unicode-normalization = "0.1.24"
+url = "2"
+wezterm-bidi = { git = "https://github.com/wezterm/wezterm.git", rev = "e2a98e1b8af156988ad0ac778658ac27b60a55fb", default-features = false }
+wezterm-dynamic = { git = "https://github.com/wezterm/wezterm.git", rev = "e2a98e1b8af156988ad0ac778658ac27b60a55fb", default-features = false, features = ["std"] }
+wezterm-cell = { git = "https://github.com/wezterm/wezterm.git", rev = "e2a98e1b8af156988ad0ac778658ac27b60a55fb", features = ["std", "use_image"] }
+wezterm-escape-parser = { git = "https://github.com/wezterm/wezterm.git", rev = "e2a98e1b8af156988ad0ac778658ac27b60a55fb", features = ["std", "use_image"] }
+wezterm-surface = { git = "https://github.com/wezterm/wezterm.git", rev = "e2a98e1b8af156988ad0ac778658ac27b60a55fb", features = ["std", "appdata", "use_image"] }
+termwiz = { git = "https://github.com/wezterm/wezterm.git", rev = "e2a98e1b8af156988ad0ac778658ac27b60a55fb", features = ["use_image"] }
