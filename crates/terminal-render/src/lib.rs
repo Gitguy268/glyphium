@@ -1,16 +1,18 @@
 //! Draws [`Frame`]s with wgpu: instanced quads for backgrounds, decorations and glyphs.
 //!
-//! The renderer holds no terminal state and knows no escape sequences. It keeps instance
-//! lists per row and rebuilds only dirty rows; [`Renderer::update`] says whether anything
-//! changed, so an idle terminal draws nothing. Lost GPU resources are rebuilt from the frame.
+//! [`Renderer`] holds what panes share: the pipeline, fonts and glyph atlases. Each pane has a
+//! [`PaneView`] with its instance lists per row, rebuilt only for dirty rows. Neither holds
+//! terminal state or knows escape sequences. [`Renderer::update`] says whether anything
+//! changed, so an idle terminal draws nothing, and lost GPU resources can be rebuilt from
+//! frames at any time.
 
 mod glyphs;
 
 use glyphium_terminal_core::{Cell, CursorStyle, Frame, Rgb, attrs};
 use wgpu::util::DeviceExt as _;
 
-pub use glyphs::{ATLAS_SIZE, CellMetrics, FontConfig};
-use glyphs::{AtlasFull, Glyphs, PlacedGlyph, STYLE_BOLD, STYLE_ITALIC};
+pub use glyphs::{CellMetrics, FontConfig};
+use glyphs::{AtlasFull, COLOR_ATLAS_SIZE, Glyphs, MASK_ATLAS_SIZE, PlacedGlyph, STYLE_BOLD, STYLE_ITALIC};
 
 /// Non-sRGB, so sRGB colour values pass through unchanged on every platform.
 pub const OFFSCREEN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -50,6 +52,8 @@ pub struct Stats {
     pub buffer_uploads: u64,
     pub glyph_uploads: u64,
     pub atlas_evictions: u64,
+    /// Frames that needed more glyphs than one page holds.
+    pub atlas_overflows: u64,
     pub draws: u64,
 }
 
@@ -57,28 +61,55 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
-    bind_group: wgpu::BindGroup,
-    globals: wgpu::Buffer,
+    layout: wgpu::BindGroupLayout,
+    mask_view: wgpu::TextureView,
+    color_view: wgpu::TextureView,
+    nearest: wgpu::Sampler,
+    linear: wgpu::Sampler,
     mask_atlas: wgpu::Texture,
     color_atlas: wgpu::Texture,
+    glyphs: Glyphs,
+    /// Bumped when cached glyph positions die (eviction, font change): views rebuild.
+    glyph_generation: u64,
+    pub stats: Stats,
+}
+
+/// One pane's GPU state: instance lists and buffers, positioned by its own origin.
+pub struct PaneView {
     instances: wgpu::Buffer,
     capacity: u64,
-    glyphs: Glyphs,
+    globals: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
     rows: Vec<RowInstances>,
     cursor: Vec<Instance>,
     scratch: Vec<Instance>,
     count: u32,
-    clear: wgpu::Color,
-    viewport: (u32, u32),
+    background: [f32; 4],
+    glyph_generation: u64,
     /// Set by `invalidate`: rebuild every row whatever the frame says.
     rebuild_all: bool,
-    pub stats: Stats,
 }
 
-fn atlas(device: &wgpu::Device, format: wgpu::TextureFormat, label: &str) -> wgpu::Texture {
+impl PaneView {
+    /// The next `update` rebuilds every row and re-uploads the instance buffer.
+    pub fn invalidate(&mut self) {
+        self.rebuild_all = true;
+    }
+}
+
+/// Where a pane appears in the target, in pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PaneRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+fn atlas(device: &wgpu::Device, size: u32, format: wgpu::TextureFormat, label: &str) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
-        size: wgpu::Extent3d { width: ATLAS_SIZE, height: ATLAS_SIZE, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -158,52 +189,76 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
-        let globals = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("globals"),
-            contents: bytemuck::cast_slice(&[1.0f32, 1.0, 0.0, 0.0]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let mask_atlas = atlas(&device, wgpu::TextureFormat::R8Unorm, "mask atlas");
-        let color_atlas = atlas(&device, wgpu::TextureFormat::Rgba8Unorm, "color atlas");
+        let (mask_size, color_size) = fonts.atlas_sizes.unwrap_or((MASK_ATLAS_SIZE, COLOR_ATLAS_SIZE));
+        let mask_atlas = atlas(&device, mask_size, wgpu::TextureFormat::R8Unorm, "mask atlas");
+        let color_atlas = atlas(&device, color_size, wgpu::TextureFormat::Rgba8Unorm, "color atlas");
         let nearest = device.create_sampler(&wgpu::SamplerDescriptor::default());
         let linear = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("glyphium"),
-            layout: &layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&mask_atlas.create_view(&Default::default())) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&color_atlas.create_view(&Default::default())) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&nearest) },
-                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&linear) },
-            ],
-        });
-        let capacity = 4096;
-        let instances = instance_buffer(&device, capacity);
+        let mask_view = mask_atlas.create_view(&Default::default());
+        let color_view = color_atlas.create_view(&Default::default());
         Self {
             device,
             queue,
             pipeline,
-            bind_group,
-            globals,
+            layout,
+            mask_view,
+            color_view,
+            nearest,
+            linear,
             mask_atlas,
             color_atlas,
-            instances,
-            capacity,
             glyphs: Glyphs::new(fonts),
+            glyph_generation: 0,
+            stats: Stats::default(),
+        }
+    }
+
+    pub fn new_view(&self) -> PaneView {
+        let capacity = 4096;
+        let globals = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("globals"),
+            contents: bytemuck::cast_slice(&[1.0f32, 1.0, 0.0, 0.0]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("glyphium pane"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&self.mask_view) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.color_view) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.nearest) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&self.linear) },
+            ],
+        });
+        PaneView {
+            instances: instance_buffer(&self.device, capacity),
+            capacity,
+            globals,
+            bind_group,
             rows: vec![],
             cursor: vec![],
             scratch: vec![],
             count: 0,
-            clear: wgpu::Color::BLACK,
-            viewport: (0, 0),
+            background: [0.0, 0.0, 0.0, 1.0],
+            glyph_generation: self.glyph_generation,
             rebuild_all: true,
-            stats: Stats::default(),
         }
+    }
+
+    /// Changes the font size (zoom, DPI). Views rebuild on their next `update`; cell metrics
+    /// change, so the caller also resizes its terminals.
+    pub fn set_font_size(&mut self, size_px: f32) {
+        self.glyphs.set_size(size_px);
+        self.glyph_generation += 1;
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
     }
 
     pub fn metrics(&self) -> CellMetrics {
@@ -216,50 +271,44 @@ impl Renderer {
         (m.width * cols as u32, m.height * rows as u32)
     }
 
-    /// The next `update` rebuilds every row and re-uploads the instance buffer.
-    pub fn invalidate(&mut self) {
-        self.rebuild_all = true;
-    }
-
-    /// Brings GPU state up to date with `frame`. False means nothing changed since the last
-    /// call, so the caller can skip drawing and presenting.
-    pub fn update(&mut self, frame: &Frame) -> bool {
-        let full = frame.full_redraw || self.rebuild_all || self.rows.len() != frame.rows.len();
+    /// Brings a view up to date with `frame`. False means nothing changed since the last call,
+    /// so the caller can skip drawing and presenting.
+    pub fn update(&mut self, view: &mut PaneView, frame: &Frame) -> bool {
+        let mut stale = view.rebuild_all || view.glyph_generation != self.glyph_generation;
         let any_dirty = frame.rows.iter().any(|r| r.dirty);
+        let mut full = frame.full_redraw || stale || view.rows.len() != frame.rows.len();
         let mut cursor = vec![];
+        // A full page empties and the frame retries once. If the frame alone needs more than a
+        // page, it draws what fits: a bounded picture beats a hang, whatever the output is.
+        self.glyphs.draw_what_fits = false;
         loop {
-            let built = self.build_rows(frame, full).and_then(|()| {
+            let built = self.build_rows(view, frame, full).and_then(|()| {
                 cursor.clear();
                 self.build_cursor(frame, &mut cursor)
             });
             match built {
                 Ok(()) => break,
                 Err(AtlasFull) => {
-                    // One attempt on an empty atlas per frame; `full` is rebuilt below.
-                    self.glyphs.reset();
-                    self.glyphs.evictions += 1;
-                    self.stats.atlas_evictions += 1;
-                    self.rows.clear();
-                    self.rebuild_all = true;
-                    if self.glyphs.evictions > 64 && self.stats.rows_rebuilt == 0 {
-                        break;
+                    self.glyphs.draw_what_fits = full;
+                    if full {
+                        self.stats.atlas_overflows += 1;
                     }
+                    self.glyphs.reset();
+                    self.glyph_generation += 1;
+                    self.stats.atlas_evictions += 1;
+                    stale = true;
+                    full = true;
                 }
             }
         }
-        let cursor_changed = !bytes_eq(&cursor, &self.cursor);
-        let changed = full || any_dirty || cursor_changed || self.rebuild_all;
-        self.rebuild_all = false;
-        self.cursor = cursor;
-        self.clear = wgpu::Color {
-            r: frame.background.r as f64 / 255.0,
-            g: frame.background.g as f64 / 255.0,
-            b: frame.background.b as f64 / 255.0,
-            a: 1.0,
-        };
+        view.glyph_generation = self.glyph_generation;
+        let changed = full || any_dirty || stale || !bytes_eq(&cursor, &view.cursor);
+        view.rebuild_all = false;
+        view.cursor = cursor;
+        view.background = rgba(frame.background, 1.0);
         self.flush_glyphs();
         if changed {
-            self.upload_instances();
+            self.upload_instances(view);
         }
         changed
     }
@@ -282,32 +331,30 @@ impl Renderer {
         }
     }
 
-    fn upload_instances(&mut self) {
-        self.scratch.clear();
-        for r in &self.rows {
-            self.scratch.extend_from_slice(&r.back);
+    fn upload_instances(&mut self, view: &mut PaneView) {
+        view.scratch.clear();
+        for r in &view.rows {
+            view.scratch.extend_from_slice(&r.back);
         }
-        for r in &self.rows {
-            self.scratch.extend_from_slice(&r.front);
+        for r in &view.rows {
+            view.scratch.extend_from_slice(&r.front);
         }
-        self.scratch.extend_from_slice(&self.cursor);
-        let bytes: &[u8] = bytemuck::cast_slice(&self.scratch);
-        if bytes.len() as u64 > self.capacity {
-            self.capacity = (bytes.len() as u64).next_power_of_two();
-            self.instances = instance_buffer(&self.device, self.capacity);
+        view.scratch.extend_from_slice(&view.cursor);
+        let bytes: &[u8] = bytemuck::cast_slice(&view.scratch);
+        if bytes.len() as u64 > view.capacity {
+            view.capacity = (bytes.len() as u64).next_power_of_two();
+            view.instances = instance_buffer(&self.device, view.capacity);
         }
-        self.queue.write_buffer(&self.instances, 0, bytes);
-        self.count = self.scratch.len() as u32;
+        self.queue.write_buffer(&view.instances, 0, bytes);
+        view.count = view.scratch.len() as u32;
         self.stats.buffer_uploads += 1;
     }
 
-    fn build_rows(&mut self, frame: &Frame, full: bool) -> Result<(), AtlasFull> {
-        let rebuild_everything = full || self.rows.len() != frame.rows.len();
-        self.rows.resize_with(frame.rows.len(), RowInstances::default);
+    fn build_rows(&mut self, view: &mut PaneView, frame: &Frame, full: bool) -> Result<(), AtlasFull> {
+        let rebuild_everything = full || view.rows.len() != frame.rows.len();
+        view.rows.resize_with(frame.rows.len(), RowInstances::default);
         let m = self.glyphs.metrics();
-        let mut rows = std::mem::take(&mut self.rows);
-        let mut result = Ok(());
-        for (y, (row, out)) in frame.rows.iter().zip(rows.iter_mut()).enumerate() {
+        for (y, (row, out)) in frame.rows.iter().zip(view.rows.iter_mut()).enumerate() {
             if !(rebuild_everything || row.dirty) {
                 continue;
             }
@@ -315,15 +362,11 @@ impl Renderer {
             out.front.clear();
             let top = (y as u32 * m.height) as f32;
             for (x, cell) in row.cells.iter().enumerate() {
-                if let Err(e) = self.push_cell(cell, frame, x as u32, top, m, out) {
-                    result = Err(e);
-                    break;
-                }
+                self.push_cell(cell, frame, x as u32, top, m, out)?;
             }
             self.stats.rows_rebuilt += 1;
         }
-        self.rows = rows;
-        result
+        Ok(())
     }
 
     fn push_cell(&mut self, cell: &Cell, frame: &Frame, x: u32, top: f32, m: CellMetrics, out: &mut RowInstances) -> Result<(), AtlasFull> {
@@ -386,19 +429,25 @@ impl Renderer {
         Ok(())
     }
 
-    /// Records the frame's draw into `view`, which must be `viewport` pixels large.
-    pub fn draw(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, viewport: (u32, u32)) {
-        if self.viewport != viewport {
-            self.viewport = viewport;
-            self.queue.write_buffer(&self.globals, 0, bytemuck::cast_slice(&[viewport.0 as f32, viewport.1 as f32, 0.0, 0.0]));
+    /// Records a draw of `panes` into `target` (`viewport` pixels): clears to `clear`, then
+    /// fills and draws each pane in its rectangle. Hidden panes are simply not listed.
+    pub fn draw(&mut self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, viewport: (u32, u32), clear: Rgb, panes: &[(&PaneView, PaneRect)]) {
+        for (view, rect) in panes {
+            // Offset through the projection: x and y in a pane's own pixels stay valid.
+            let globals = [viewport.0 as f32, viewport.1 as f32, rect.x as f32, rect.y as f32];
+            self.queue.write_buffer(&view.globals, 0, bytemuck::cast_slice(&globals));
         }
+        let c = rgba(clear, 1.0);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("glyphium"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
+                view: target,
                 depth_slice: None,
                 resolve_target: None,
-                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(self.clear), store: wgpu::StoreOp::Store },
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color { r: c[0] as f64, g: c[1] as f64, b: c[2] as f64, a: 1.0 }),
+                    store: wgpu::StoreOp::Store,
+                },
             })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
@@ -406,15 +455,28 @@ impl Renderer {
             multiview_mask: None,
         });
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_vertex_buffer(0, self.instances.slice(..));
-        pass.draw(0..4, 0..self.count);
+        for (view, rect) in panes {
+            let x2 = (rect.x + rect.width).min(viewport.0);
+            let y2 = (rect.y + rect.height).min(viewport.1);
+            if rect.x >= x2 || rect.y >= y2 {
+                continue;
+            }
+            pass.set_scissor_rect(rect.x, rect.y, x2 - rect.x, y2 - rect.y);
+            pass.set_bind_group(0, &view.bind_group, &[]);
+            pass.set_vertex_buffer(0, view.instances.slice(..));
+            pass.draw(0..4, 0..view.count);
+        }
         self.stats.draws += 1;
     }
 
-    /// Renders to a texture and reads it back as tightly packed RGBA. For tests and
+    /// Renders one pane to a texture and reads it back as tightly packed RGBA. For tests and
     /// screenshots; awaits the GPU, so it works natively and in the browser.
-    pub async fn render_to_rgba(&mut self, viewport: (u32, u32)) -> Vec<u8> {
+    pub async fn render_to_rgba(&mut self, view: &PaneView, background: Rgb, viewport: (u32, u32)) -> Vec<u8> {
+        let rect = PaneRect { x: 0, y: 0, width: viewport.0, height: viewport.1 };
+        self.render_panes_to_rgba(background, viewport, &[(view, rect)]).await
+    }
+
+    pub async fn render_panes_to_rgba(&mut self, clear: Rgb, viewport: (u32, u32), panes: &[(&PaneView, PaneRect)]) -> Vec<u8> {
         let (w, h) = viewport;
         let size = wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 };
         let target = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -435,7 +497,7 @@ impl Renderer {
             mapped_at_creation: false,
         });
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        self.draw(&mut encoder, &target.create_view(&Default::default()), viewport);
+        self.draw(&mut encoder, &target.create_view(&Default::default()), viewport, clear, panes);
         encoder.copy_texture_to_buffer(
             target.as_image_copy(),
             wgpu::TexelCopyBufferInfo {

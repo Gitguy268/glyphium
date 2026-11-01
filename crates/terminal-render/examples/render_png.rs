@@ -17,7 +17,7 @@ fn main() {
     let fonts = FontConfig {
         size_px: 16.0,
         extra_fonts: vec![std::fs::read("fixtures/fonts/NotoSansMonoCJKjp-subset.otf").unwrap(), std::fs::read("fixtures/fonts/NotoColorEmoji-subset.ttf").unwrap()],
-        system_fonts: false,
+        ..Default::default()
     };
     let mut renderer = Renderer::new(device, queue, OFFSCREEN_FORMAT, &fonts);
     let (cols, rows) = (80, 24);
@@ -25,9 +25,10 @@ fn main() {
     term.write(&bytes);
     let mut frame = Frame::default();
     term.update_frame(&mut frame);
-    renderer.update(&frame);
+    let mut view = renderer.new_view();
+    renderer.update(&mut view, &frame);
     let (w, h) = renderer.pixel_size(cols, rows);
-    let rgba = pollster::block_on(renderer.render_to_rgba((w, h)));
+    let rgba = pollster::block_on(renderer.render_to_rgba(&view, frame.background, (w, h)));
     // Raw pixels next to the PNG, for exact comparison.
     std::fs::write(format!("{out}.rgba"), &rgba).unwrap();
     let file = std::io::BufWriter::new(std::fs::File::create(out).unwrap());

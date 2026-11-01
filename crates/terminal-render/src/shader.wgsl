@@ -1,6 +1,6 @@
 // One instanced quad per background, decoration or glyph. Colours are sRGB values drawn to a
 // non-sRGB target, so they reach the screen unconverted and blending happens in gamma space.
-struct Globals { viewport: vec2<f32> };
+struct Globals { viewport: vec2<f32>, origin: vec2<f32> };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var mask_atlas: texture_2d<f32>;
 @group(0) @binding(2) var color_atlas: texture_2d<f32>;
@@ -26,7 +26,7 @@ struct Out {
 @vertex
 fn vs(in: In) -> Out {
     let corner = vec2<f32>(f32(in.vertex & 1u), f32((in.vertex >> 1u) & 1u));
-    let px = in.pos + corner * in.size;
+    let px = globals.origin + in.pos + corner * in.size;
     var out: Out;
     out.position = vec4<f32>(px.x / globals.viewport.x * 2.0 - 1.0, 1.0 - px.y / globals.viewport.y * 2.0, 0.0, 1.0);
     out.uv = in.uv.xy + corner * in.uv.zw;

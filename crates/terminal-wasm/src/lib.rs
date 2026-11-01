@@ -3,7 +3,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use glyphium_terminal_core::{Frame, Terminal};
-use glyphium_terminal_render::{FontConfig, OFFSCREEN_FORMAT, Renderer};
+use glyphium_terminal_render::{FontConfig, OFFSCREEN_FORMAT, PaneView, Renderer};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -22,6 +22,7 @@ pub struct WebTerminal {
     term: Terminal,
     frame: Frame,
     renderer: Renderer,
+    view: PaneView,
     adapter: String,
     cols: u16,
     rows: u16,
@@ -35,11 +36,14 @@ impl WebTerminal {
         let adapter = instance.request_adapter(&Default::default()).await.map_err(|e| JsError::new(&format!("no WebGPU adapter: {e}")))?;
         let info = adapter.get_info();
         let (device, queue) = adapter.request_device(&Default::default()).await.map_err(|e| JsError::new(&format!("no WebGPU device: {e}")))?;
-        let fonts = FontConfig { size_px, extra_fonts: extra_fonts.iter().map(|f| f.to_vec()).collect(), system_fonts: false };
+        let fonts = FontConfig { size_px, extra_fonts: extra_fonts.iter().map(|f| f.to_vec()).collect(), ..Default::default() };
+        let renderer = Renderer::new(device, queue, OFFSCREEN_FORMAT, &fonts);
+        let view = renderer.new_view();
         Ok(WebTerminal {
             term: Terminal::new(cols, rows, 5000),
             frame: Frame::default(),
-            renderer: Renderer::new(device, queue, OFFSCREEN_FORMAT, &fonts),
+            renderer,
+            view,
             adapter: format!("{} ({:?})", info.name, info.backend),
             cols,
             rows,
@@ -73,8 +77,8 @@ impl WebTerminal {
     /// Renders the current state offscreen and returns tightly packed RGBA.
     pub async fn render_rgba(&mut self) -> Vec<u8> {
         self.term.update_frame(&mut self.frame);
-        self.renderer.update(&self.frame);
+        self.renderer.update(&mut self.view, &self.frame);
         let size = self.renderer.pixel_size(self.cols, self.rows);
-        self.renderer.render_to_rgba(size).await
+        self.renderer.render_to_rgba(&self.view, self.frame.background, size).await
     }
 }
