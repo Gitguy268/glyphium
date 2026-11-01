@@ -70,3 +70,14 @@ Result: **libghostty-vt proposed** (`docs/adr/0001-core.md`, status Proposed). I
 - `crates/terminal-wasm`: browser build, 2.87 MB wasm / 1.16 MB gzip with the four bundled fonts.
 - **M1 text gate:** the demo frame rendered by native Metal and by WebGPU in Playwright Chromium on the Apple M4 (`metal-3`, not a fallback adapter) differs in 0 of 384,000 pixels (`bench/results/2026-11-01-render/`). Run: `bench/web/build-render.sh`, build the `render_png` example, `node bench/web/run-render.mjs OUT`.
 - The trimmed Ghostty feature set is not used: it lacks `ghostty_cell_get`, which frames need for cell widths.
+
+## 2026-11-01: input layer (M3 next)
+
+- `crates/terminal-core/src/input.rs`: key, mouse, focus and paste encoding through Ghostty's encoders; viewport scrolling; selection and selection text. W3C key names map to Ghostty keys, so winit and browser events share one table. 13 core tests pass.
+- Next, in order:
+  1. `crates/session-host` (portable-pty 0.9): reader thread with a bounded queue, writer thread, generation-tagged events; test against a real bash, then vim, less, htop and tmux.
+  2. `apps/desktop` (winit 0.30 + wgpu): single pane first, surface format without the sRGB suffix, draw only when `Renderer::update` returns true; then tabs, splits, IME.
+  3. Renderer tests: idle draws nothing, only dirty rows rebuild, atlas eviction, device loss.
+  4. M2: vttest and a fuzz corpus, driven through the PTY layer. Web client: canvas surface and input bridge.
+- Known gaps: `crates/terminal-render` has no automated tests yet (M1 evidence is the pixel comparison). Unbracketed multi-line paste has `paste_needs_confirmation` but no UI uses it yet.
+- Open questions for the user: report the wezterm grapheme-split bug and the xterm.js 6.0.0 ZWJ bug upstream? Delete the stale `bench/results/2026-10-25-bakeoff/invariance-big.log`?

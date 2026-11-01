@@ -5,6 +5,8 @@
 //! All `unsafe` calls into the C API live in this crate. Frames are read through Ghostty's
 //! render-state API, which reports dirty rows, so an unchanged row costs nothing.
 
+pub mod input;
+
 use std::ffi::c_void;
 use std::mem::{MaybeUninit, size_of};
 use std::ptr;
@@ -93,19 +95,20 @@ pub struct Frame {
     pub full_redraw: bool,
 }
 
-fn check(r: GhosttyResult, what: &str) {
+pub(crate) fn check(r: GhosttyResult, what: &str) {
     assert_eq!(r, GHOSTTY_SUCCESS, "{what} failed: {r}");
 }
 
 /// `ghostty_mode_new` is a C inline, so bindgen cannot see it: value in the low 15 bits, the
 /// ANSI flag in the top one. See `ghostty/vt/modes.h`.
-const fn mode(value: u16, ansi: bool) -> GhosttyMode {
+pub(crate) const fn mode(value: u16, ansi: bool) -> GhosttyMode {
     (value & 0x7fff) | ((ansi as u16) << 15)
 }
 
 const MODE_GRAPHEME_CLUSTER: GhosttyMode = mode(2027, false);
+pub(crate) const MODE_BRACKETED_PASTE: GhosttyMode = mode(2004, false);
 
-unsafe fn zeroed<T>() -> T {
+pub(crate) unsafe fn zeroed<T>() -> T {
     unsafe { MaybeUninit::zeroed().assume_init() }
 }
 
@@ -121,6 +124,7 @@ pub struct Terminal {
     row_cells: GhosttyRenderStateRowCells,
     // Boxed so the pointer handed to the write-pty callback stays put.
     replies: Box<Vec<u8>>,
+    encoders: input::Encoders,
 }
 
 impl Terminal {
@@ -146,7 +150,7 @@ impl Terminal {
             let cluster = GhosttyTerminalModeConfig { mode: MODE_GRAPHEME_CLUSTER, value: true };
             check(ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_MODE_DEFAULT, &cluster as *const _ as *const c_void), "mode 2027");
         }
-        Self { term, render, row_iter, row_cells, replies }
+        Self { term, render, row_iter, row_cells, replies, encoders: input::Encoders::new() }
     }
 
     /// Feeds application output. Any chunking gives the same state (checked by `bench/bakeoff`).
@@ -167,6 +171,12 @@ impl Terminal {
         let mut out = MaybeUninit::<T>::zeroed();
         check(unsafe { ghostty_terminal_get(self.term, key, out.as_mut_ptr() as *mut c_void) }, "ghostty_terminal_get");
         unsafe { out.assume_init() }
+    }
+
+    pub(crate) fn mode(&self, mode: GhosttyMode) -> bool {
+        let mut q = GhosttyTerminalModeConfig { mode, value: false };
+        check(unsafe { ghostty_terminal_get(self.term, GHOSTTY_TERMINAL_DATA_MODE, &mut q as *mut _ as *mut c_void) }, "mode");
+        q.value
     }
 
     pub fn title(&self) -> String {
@@ -433,6 +443,88 @@ mod tests {
             t.update_frame(&mut f);
             assert_eq!(f, whole, "split at {split}");
         }
+    }
+
+    fn press<'a>(key: &str, mods: u16, text: Option<&'a str>) -> input::KeyInput<'a> {
+        input::KeyInput { action: input::KeyAction::Press, key: input::key_from_code(key).unwrap(), mods, consumed_mods: 0, text, unshifted: 0 }
+    }
+
+    #[test]
+    fn keys_follow_terminal_modes() {
+        use input::mods;
+        let mut t = Terminal::new(40, 5, 100);
+        assert_eq!(t.encode_key(&press("KeyA", 0, Some("a"))), b"a");
+        assert_eq!(t.encode_key(&press("Enter", 0, None)), b"\r");
+        assert_eq!(t.encode_key(&press("KeyC", mods::CTRL, None)), b"\x03");
+        assert_eq!(t.encode_key(&press("ArrowUp", 0, None)), b"\x1b[A");
+        t.write(b"\x1b[?1h"); // application cursor keys
+        assert_eq!(t.encode_key(&press("ArrowUp", 0, None)), b"\x1bOA");
+        assert_eq!(t.encode_key(&press("KeyE", 0, Some("é"))), "é".as_bytes());
+    }
+
+    #[test]
+    fn paste_brackets_and_neutralises_the_end_marker() {
+        let mut t = Terminal::new(40, 5, 100);
+        assert!(t.paste_needs_confirmation("rm -rf x\n"));
+        assert!(!t.paste_needs_confirmation("plain"));
+        t.write(b"\x1b[?2004h");
+        assert!(!t.paste_needs_confirmation("rm -rf x\n"));
+        let out = t.encode_paste("hi\x1b[201~there");
+        assert!(out.starts_with(b"\x1b[200~") && out.ends_with(b"\x1b[201~"));
+        assert_eq!(out.windows(6).filter(|w| w == b"\x1b[201~").count(), 1, "only the real end marker");
+    }
+
+    #[test]
+    fn mouse_reports_only_when_requested() {
+        let mut t = Terminal::new(40, 5, 100);
+        let click = input::MouseInput { action: input::MouseAction::Press, button: Some(1), mods: 0, x: 25.0, y: 45.0, any_button_pressed: true };
+        assert!(!t.mouse_tracking());
+        assert!(t.encode_mouse(&click, (400, 100), (10, 20)).is_empty());
+        t.write(b"\x1b[?1000h\x1b[?1006h");
+        assert!(t.mouse_tracking());
+        assert_eq!(t.encode_mouse(&click, (400, 100), (10, 20)), b"\x1b[<0;3;3M");
+    }
+
+    #[test]
+    fn focus_reports_only_when_requested() {
+        let mut t = Terminal::new(40, 5, 100);
+        assert!(t.encode_focus(true).is_empty());
+        t.write(b"\x1b[?1004h");
+        assert_eq!(t.encode_focus(true), b"\x1b[I");
+        assert_eq!(t.encode_focus(false), b"\x1b[O");
+    }
+
+    #[test]
+    fn selection_text_and_highlight() {
+        let mut t = Terminal::new(40, 5, 100);
+        t.write(b"hello world\r\nsecond");
+        t.select((6, 0), (10, 0));
+        assert_eq!(t.selection_text().as_deref(), Some("world"));
+        let mut f = Frame::default();
+        t.update_frame(&mut f);
+        assert_eq!(f.rows[0].cells[6].attrs & attrs::SELECTED, attrs::SELECTED);
+        assert_eq!(f.rows[0].cells[5].attrs & attrs::SELECTED, 0);
+        t.select_word((2, 1));
+        assert_eq!(t.selection_text().as_deref(), Some("second"));
+        t.clear_selection();
+        assert_eq!(t.selection_text(), None);
+    }
+
+    #[test]
+    fn scrollback_scrolls_the_viewport() {
+        let mut t = Terminal::new(40, 3, 100);
+        for i in 0..10 {
+            t.write(format!("line{i}\r\n").as_bytes());
+        }
+        let mut f = Frame::default();
+        t.update_frame(&mut f);
+        assert_eq!(line(&f, 0), "line8");
+        t.scroll_viewport(-2);
+        t.update_frame(&mut f);
+        assert_eq!(line(&f, 0), "line6");
+        t.scroll_to_bottom();
+        t.update_frame(&mut f);
+        assert_eq!(line(&f, 0), "line8");
     }
 
     #[test]
