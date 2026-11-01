@@ -1,34 +1,30 @@
-//! With the `ghostty` feature, generates bindings for libghostty-vt and links it statically.
-//! `GHOSTTY_VT_DIR` points at a `zig build -Demit-lib-vt` output directory (default:
-//! `.tools/ghostty/zig-out`, or `zig-out-wasm` for wasm32, built with
-//! `-Dtarget=wasm32-freestanding --prefix zig-out-wasm`). libclang comes from
-//! `LIBCLANG_PATH`, or the Xcode Command Line Tools on macOS.
+//! Generates bindings for libghostty-vt and links it statically.
+//!
+//! `GHOSTTY_VT_DIR` points at a `zig build -Demit-lib-vt` output directory. The default is
+//! `.tools/ghostty/zig-out`, or for wasm32 `zig-out-wasm` (built with
+//! `-Dtarget=wasm32-freestanding --prefix zig-out-wasm`), or `zig-out-wasm-interactive` with
+//! the `interactive` feature. libclang comes from `LIBCLANG_PATH`, or the Xcode Command Line
+//! Tools on macOS.
 
 use std::env;
-#[cfg(feature = "ghostty")]
 use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=GHOSTTY_VT_DIR");
-    if env::var_os("CARGO_FEATURE_GHOSTTY").is_none() {
-        return;
-    }
-    #[cfg(feature = "ghostty")]
-    ghostty();
-}
-
-#[cfg(feature = "ghostty")]
-fn ghostty() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let checkout = manifest.join("../../.tools/ghostty");
     let wasm = env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32");
-    let out = if wasm { "zig-out-wasm" } else { "zig-out" };
-    let dir = env::var_os("GHOSTTY_VT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| manifest.join("../../.tools/ghostty").join(out));
-    // The wasm install has no headers; they are the same as the native ones.
-    let include = manifest.join("../../.tools/ghostty/include");
+    let out = match (wasm, env::var_os("CARGO_FEATURE_INTERACTIVE").is_some()) {
+        (false, _) => "zig-out",
+        (true, false) => "zig-out-wasm",
+        (true, true) => "zig-out-wasm-interactive",
+    };
+    let dir = env::var_os("GHOSTTY_VT_DIR").map(PathBuf::from).unwrap_or_else(|| checkout.join(out));
+    // The wasm installs have no headers; they are the same as the native ones.
+    let include = checkout.join("include");
     let header = include.join("ghostty/vt.h");
-    assert!(header.exists(), "libghostty-vt not found at {}; set GHOSTTY_VT_DIR", dir.display());
+    assert!(header.exists(), "Ghostty checkout not found at {}", checkout.display());
+    assert!(dir.join("lib/libghostty-vt.a").exists(), "libghostty-vt.a not found in {}; set GHOSTTY_VT_DIR", dir.display());
     println!("cargo:rerun-if-changed={}", header.display());
     println!("cargo:rustc-link-search=native={}", dir.join("lib").display());
     println!("cargo:rustc-link-lib=static=ghostty-vt");

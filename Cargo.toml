@@ -1,11 +1,15 @@
 [workspace]
 resolver = "3"
-members = ["bench/fixtures", "bench/bakeoff"]
+members = ["bench/fixtures", "bench/bakeoff", "crates/*"]
 
 [workspace.package]
 edition = "2024"
 license = "MIT"
 authors = ["Lucas Van De Weerd"]
+
+# wgpu and winit debug info is large and the disk on the reference Mac is tight.
+[profile.dev]
+debug = "line-tables-only"
 
 [profile.release]
 debug = 1
