@@ -7,8 +7,5 @@ license.workspace = true
 authors.workspace = true
 description = "Safe, deterministic terminal state over libghostty-vt: bytes in; frames and replies out"
 
-[features]
-interactive = ["glyphium-core-ffi/interactive"]
-
 [dependencies]
 glyphium-core-ffi = { path = "../core-ffi" }

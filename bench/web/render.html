@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Glyphium render check</title>
+<canvas id="c"></canvas>
+<script type="module">
+  import init, { WebTerminal } from "/pkg/terminal/glyphium_terminal_wasm.js";
+  const bytes = async p => new Uint8Array(await (await fetch(p)).arrayBuffer());
+  window.bench = {
+    ready: true,
+    async run() {
+      await init();
+      const fonts = await Promise.all(["NotoSansMonoCJKjp-subset.otf", "NotoColorEmoji-subset.ttf"].map(f => bytes(`/repo-fixtures/fonts/${f}`)));
+      const t = await WebTerminal.create(80, 24, 16, fonts);
+      t.write(await bytes("/repo-fixtures/render-demo.bin"));
+      const rgba = await t.render_rgba();
+      const [w, h] = [t.pixel_width(), t.pixel_height()];
+      const c = document.getElementById("c");
+      c.width = w; c.height = h;
+      c.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(rgba), w, h), 0, 0);
+      let bin = "";
+      for (let i = 0; i < rgba.length; i += 0x8000) bin += String.fromCharCode.apply(null, rgba.subarray(i, i + 0x8000));
+      return { w, h, adapter: t.adapter(), rgba: btoa(bin), png: c.toDataURL("image/png") };
+    },
+  };
+</script>

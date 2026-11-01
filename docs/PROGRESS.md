@@ -61,3 +61,12 @@ Result: **libghostty-vt proposed** (`docs/adr/0001-core.md`, status Proposed). I
   - Ghostty's default scrollback byte limit kept only about 565 lines, so the adapter removes it.
 - Not done: vttest (moves to M2), Windows Zig CI, and a throughput re-run on an idle machine (load average was about 5).
 - Disk ran out once during this session (1 GB free). `target/` regrows to about 2–3 GB. `bench/results/2026-10-25-bakeoff/invariance-big.log` is a stale, untracked log from the pre-fix run.
+
+## 2026-11-01: M1 closed
+
+- ADR 0001 accepted (user replied "build"). FFI moved to `crates/core-ffi`; bake-off hashes unchanged after the move.
+- `crates/terminal-core`: frames through Ghostty's render-state API, dirty rows only, mode 2027 on by default, replies drained in order.
+- `crates/terminal-render`: wgpu instanced quads, cosmic-text + swash shaping, one bounded 2048px page each for mask and colour glyphs (clear-all eviction), block and box characters drawn as rectangles.
+- `crates/terminal-wasm`: browser build, 2.87 MB wasm / 1.16 MB gzip with the four bundled fonts.
+- **M1 text gate:** the demo frame rendered by native Metal and by WebGPU in Playwright Chromium on the Apple M4 (`metal-3`, not a fallback adapter) differs in 0 of 384,000 pixels (`bench/results/2026-11-01-render/`). Run: `bench/web/build-render.sh`, build the `render_png` example, `node bench/web/run-render.mjs OUT`.
+- The trimmed Ghostty feature set is not used: it lacks `ghostty_cell_get`, which frames need for cell widths.

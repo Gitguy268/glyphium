@@ -8,10 +8,5 @@ authors.workspace = true
 description = "Bindings for libghostty-vt (Zig static library, native and wasm32)"
 build = "build.rs"
 
-[features]
-# wasm32 only: link the interactive feature set (zig-out-wasm-interactive) instead of the
-# full library. It leaves out the grid-ref API, which only the bake-off adapter uses.
-interactive = []
-
 [build-dependencies]
 bindgen = "0.72"

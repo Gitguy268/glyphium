@@ -1,0 +1,11 @@
+{
+  "web": " (BrowserWebGpu)",
+  "native": "adapter: AdapterInfo { name: \"Apple M4\", vendor: 0, device: 0, device_type: IntegratedGpu, device_pci_bus_id: \"\", driver",
+  "size": [
+    800,
+    480
+  ],
+  "pixels": 384000,
+  "differing": 0,
+  "maxDelta": 0
+}

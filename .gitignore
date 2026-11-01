@@ -5,3 +5,4 @@ zig-out/
 .zig-cache/
 fixtures/generated/
 .DS_Store
+*.rgba

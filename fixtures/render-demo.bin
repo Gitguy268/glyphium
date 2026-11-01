@@ -1,0 +1,14 @@
+[1mGlyphium render test[0m  [2mfaint[0m [3mitalic[0m [1;3mbold italic[0m
+[30m██[0m[31m██[0m[32m██[0m[33m██[0m[34m██[0m[35m██[0m[36m██[0m[37m██[0m[90m██[0m[91m██[0m[92m██[0m[93m██[0m[94m██[0m[95m██[0m[96m██[0m[97m██[0m [38;2;255;128;0mtruecolor[0m [48;2;30;60;120m bg [0m [7minverse[0m
+[4msingle[0m [4:2mdouble[0m [4:3mcurly[0m [4:4mdotted[0m [4:5mdashed[0m [9mstrike[0m [53mover[0m [4:3;58:2::255:0:0mred curl[0m
+CJK: 日本語 中文字符 漢字 テスト 한국어
+Emoji: 😀 🎉 👍🏽 👨‍👩‍👧‍👦 ❤️ 🏳️‍🌈 🇳🇱 👩‍👧 |end
+┌────────┬───┐ ░░▒▒▓▓██ ▀▄▌▐
+│ box    │ x │
+├────────┼───┤
+└────────┴───┘
+Accents: café ä̲ ñ
+The quick brown fox jumps over the lazy dog 0123456789 ()[]{}<>!?@#$%^&*
+[30;47m black on white [0m[K
+[42m[K green erase[0m
+$ cursor here [6 q

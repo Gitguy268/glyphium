@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const here = fileURLToPath(new URL(".", import.meta.url));
 const roots = [
   ["/fixtures/", join(here, "../../fixtures/generated")],
+  ["/repo-fixtures/", join(here, "../../fixtures")],
   ["/pkg/", join(here, "../../target/web-pkg")],
   ["/", here],
 ];

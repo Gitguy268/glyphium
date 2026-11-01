@@ -1,0 +1,20 @@
+Glyphium
+Copyright (c) 2026 Lucas Van De Weerd. MIT licence, see LICENSE.
+
+Third-party code and fonts included in or linked into this project:
+
+libghostty-vt (ghostty-org/ghostty, commit cec8b92f): MIT. Built with Zig and linked statically.
+
+Vendored in third_party/, modified; see third_party/README.md:
+  alacritty_terminal 0.26.0: Apache-2.0
+  vte 0.15.0: MIT OR Apache-2.0
+  termwiz, wezterm-escape-parser, wezterm-term (wezterm/wezterm, commit e2a98e1b): MIT
+These are used only by the bench/bakeoff comparison and do not ship in the product.
+
+Fonts:
+  JetBrains Mono NL 2.304 (crates/terminal-render/fonts): SIL OFL 1.1, bundled.
+  Noto Sans Mono CJK JP and Noto Color Emoji 2.051 (fixtures/fonts, subsets): SIL OFL 1.1,
+  test fixtures only.
+
+Ideas, no code:
+  VTE, GNOME Terminal, Ptyxis: LGPL-3.0 / GPL-3.0. Behaviour comparison only.

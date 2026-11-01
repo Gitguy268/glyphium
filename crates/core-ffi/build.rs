@@ -2,9 +2,8 @@
 //!
 //! `GHOSTTY_VT_DIR` points at a `zig build -Demit-lib-vt` output directory. The default is
 //! `.tools/ghostty/zig-out`, or for wasm32 `zig-out-wasm` (built with
-//! `-Dtarget=wasm32-freestanding --prefix zig-out-wasm`), or `zig-out-wasm-interactive` with
-//! the `interactive` feature. libclang comes from `LIBCLANG_PATH`, or the Xcode Command Line
-//! Tools on macOS.
+//! `-Dtarget=wasm32-freestanding --prefix zig-out-wasm`). libclang comes from `LIBCLANG_PATH`,
+//! or the Xcode Command Line Tools on macOS.
 
 use std::env;
 use std::path::PathBuf;
@@ -14,11 +13,7 @@ fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let checkout = manifest.join("../../.tools/ghostty");
     let wasm = env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32");
-    let out = match (wasm, env::var_os("CARGO_FEATURE_INTERACTIVE").is_some()) {
-        (false, _) => "zig-out",
-        (true, false) => "zig-out-wasm",
-        (true, true) => "zig-out-wasm-interactive",
-    };
+    let out = if wasm { "zig-out-wasm" } else { "zig-out" };
     let dir = env::var_os("GHOSTTY_VT_DIR").map(PathBuf::from).unwrap_or_else(|| checkout.join(out));
     // The wasm installs have no headers; they are the same as the native ones.
     let include = checkout.join("include");

@@ -1,0 +1,24 @@
+[package]
+name = "glyphium-terminal-render"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "GPU renderer for terminal frames: glyph atlas and instanced cells on wgpu"
+
+[features]
+# Native only: fall back to installed fonts (fontdb's filesystem scan).
+system-fonts = []
+
+[dependencies]
+glyphium-terminal-core = { path = "../terminal-core" }
+wgpu = "30"
+cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
+bytemuck = { version = "1", features = ["derive"] }
+futures-channel = "0.3"
+
+[dev-dependencies]
+pollster = "0.4"
+png = "0.18"
+sha2 = "0.10"
