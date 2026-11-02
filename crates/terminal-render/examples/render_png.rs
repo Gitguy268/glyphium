@@ -1,13 +1,18 @@
 //! Renders `fixtures/render-demo.bin` offscreen with the system GPU and writes a PNG, for
 //! comparing with the same frame rendered in the browser (`bench/web/run-render.mjs`).
-//! Usage: render_png OUT.png [INPUT.bin]
+//! Usage: render_png OUT.png [INPUT.bin] [--theme NAME]
 
-use glyphium_terminal_core::{Frame, Terminal};
+use glyphium_terminal_core::{Frame, Terminal, Theme};
 use glyphium_terminal_render::{FontConfig, OFFSCREEN_FORMAT, Renderer};
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let out = args.first().expect("usage: render_png OUT.png [INPUT.bin]");
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let theme = args.iter().position(|a| a == "--theme").map(|i| {
+        args.remove(i);
+        let name = args.remove(i);
+        Theme::by_name(&name).unwrap_or_else(|| panic!("unknown theme {name}; have {:?}", Theme::NAMES))
+    });
+    let out = args.first().expect("usage: render_png OUT.png [INPUT.bin] [--theme NAME]");
     let input = args.get(1).map_or("fixtures/render-demo.bin", String::as_str);
     let bytes = std::fs::read(input).expect("run from the repo root");
     let instance = wgpu::Instance::default();
@@ -22,6 +27,9 @@ fn main() {
     let mut renderer = Renderer::new(device, queue, OFFSCREEN_FORMAT, &fonts);
     let (cols, rows) = (80, 24);
     let mut term = Terminal::new(cols, rows, 1000);
+    if let Some(theme) = &theme {
+        term.set_theme(Some(theme));
+    }
     term.write(&bytes);
     let mut frame = Frame::default();
     term.update_frame(&mut frame);

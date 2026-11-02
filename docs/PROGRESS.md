@@ -79,5 +79,32 @@ Result: **libghostty-vt proposed** (`docs/adr/0001-core.md`, status Proposed). I
   2. `apps/desktop` (winit 0.30 + wgpu): single pane first, surface format without the sRGB suffix, draw only when `Renderer::update` returns true; then tabs, splits, IME.
   3. Renderer tests: idle draws nothing, only dirty rows rebuild, atlas eviction, device loss.
   4. M2: vttest and a fuzz corpus, driven through the PTY layer. Web client: canvas surface and input bridge.
-- Known gaps: `crates/terminal-render` has no automated tests yet (M1 evidence is the pixel comparison). Unbracketed multi-line paste has `paste_needs_confirmation` but no UI uses it yet.
+- Known gaps (both since closed: `crates/terminal-render/tests/gpu.rs`, and the paste banner in `apps/desktop`): `crates/terminal-render` has no automated tests yet (M1 evidence is the pixel comparison). Unbracketed multi-line paste has `paste_needs_confirmation` but no UI uses it yet.
 - Open questions for the user: report the wezterm grapheme-split bug and the xterm.js 6.0.0 ZWJ bug upstream? Delete the stale `bench/results/2026-10-25-bakeoff/invariance-big.log`?
+
+## 2026-11-01: colour themes
+
+- `crates/terminal-core/src/theme.rs`: Nujabes and Ye: Graduation. `Terminal::set_theme(Some(&theme))` sets Ghostty's default foreground, background, cursor and first 16 palette entries; `None` restores the defaults. Colours a program set through OSC survive a change. `set_theme` bumps a generation that `update_frame` compares, because a palette-only change leaves Ghostty's render state clean.
+- `Frame::selection`: the renderer uses it as the selection background, and still inverts when it is `None`, so the default look is unchanged.
+- Exposed as `WebTerminal::set_theme(name)` and `render_png --theme NAME`. No picker yet: `apps/desktop` needs a config or menu to call `set_theme`.
+- Default demo frame re-checked: 0 of 384,000 pixels differ between native and browser. Both themes through `set_theme` also differ in 0 pixels. Credits are in NOTICE.
+
+## 2026-11-01: desktop app runs; M2 fuzzing
+
+Stopped at 3.0 GB free (limit 5 GB; several sessions share this disk). Nothing here is committed: `crates/terminal-render/src/lib.rs` and `Cargo.*` also hold the themes session's changes.
+
+- `apps/desktop` (binary `glyphium`): tabs, splits, zoom, clipboard, paste confirmation, IME preedit, GPU-loss recovery. `tests/e2e/run.sh [OUT_DIR] [names]` runs 9 scripts through the real window, Metal, PTY and `/bin/bash`; all exit 0 on the final binary, using `target/release/glyphium`. Screenshots were read by eye for splits, CJK and emoji, the paste banner, vim and GPU loss.
+- Fixed while verifying:
+  - wgpu 30 presents through `queue.present`.
+  - Offscreen readback used a fixed format, which crashed on the window's BGRA pipeline.
+  - The device-lost callback needs a poll, so `redraw` polls first.
+  - Pressing Cmd alone cancelled the paste banner, so Cmd+V could never confirm. This fix is by code reading: scripts enter past the OS event and do not press real keys.
+- `[profile.release] debug = 0` (was 1) to save disk.
+- `crates/terminal-core/tests/fuzz.rs`: seeded hostile streams. 1000 seeds each pass: well-formed frames under resizes and user actions, chunking changes neither screen nor replies, incremental frames equal a full read (585,145 of 5,738,027 rows rebuilt, so dirty tracking was exercised), 16 MB control strings stay bounded. Run with `FUZZ_SEEDS=1000 cargo test --release -p glyphium-terminal-core --test fuzz`.
+- Not tested:
+  - Real OS input: physical keys, IME composition, Cmd shortcuts, clicking hyperlinks, mouse reporting to programs. Selection and wheel are scripted past the OS event.
+  - tmux and htop (not installed here); only vim and less ran as full-screen programs inside the app.
+  - Linux and Windows.
+  - A steady cursor drawing nothing: `idle.script` allows up to 7 draws, the same as the blink rate, and does not print the count, so a redraw on every blink tick would pass. Next time set `\e[2 q`, expect 0 draws and print the count.
+- Blocked: vttest. The permission system refused downloading and compiling it, so M2's vttest gate is open.
+- Next, in order: user try-out of real input; vttest once allowed; web client (canvas surface, input bridge; needs a wasm build, so free disk first); theme choice in `apps/desktop`.

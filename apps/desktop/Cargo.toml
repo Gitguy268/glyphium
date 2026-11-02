@@ -1,0 +1,18 @@
+[package]
+name = "glyphium"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "GPU terminal: native desktop app"
+
+[dependencies]
+glyphium-terminal-core = { path = "../../crates/terminal-core" }
+glyphium-terminal-render = { path = "../../crates/terminal-render", features = ["system-fonts"] }
+glyphium-session-host = { path = "../../crates/session-host" }
+winit = "0.30"
+wgpu = "30"
+pollster = "0.4"
+arboard = "3"
+png = "0.18"

@@ -1,0 +1,28 @@
+# Selection and wheel through the app's mouse handling (past the OS event).
+wait 800
+type PS1='$ '; clear\r
+wait 400
+type printf 'alpha-%d beta' $((1+1)); echo\r
+wait 300
+# Row 0 is the command, row 1 its output.
+expect-screen alpha-2 beta
+drag 0 1 6 1
+expect-selection alpha-2
+double-click 9 1
+expect-selection beta
+# Typing clears the selection.
+type :\r
+wait 200
+expect-selection 
+type clear; seq 1 200\r
+wait 400
+expect-screen 200
+wheel 60
+wait 200
+expect-not-screen 200
+expect-screen 120
+# Input returns to the live screen.
+type :\r
+wait 300
+expect-screen 200
+quit

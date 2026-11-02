@@ -2,7 +2,7 @@
 //! out; everything else (sockets, the v86 console, input events) stays in JavaScript.
 #![cfg(target_arch = "wasm32")]
 
-use glyphium_terminal_core::{Frame, Terminal};
+use glyphium_terminal_core::{Frame, Terminal, Theme};
 use glyphium_terminal_render::{FontConfig, OFFSCREEN_FORMAT, PaneView, Renderer};
 use wasm_bindgen::prelude::*;
 
@@ -52,6 +52,16 @@ impl WebTerminal {
 
     pub fn write(&mut self, bytes: &[u8]) {
         self.term.write(bytes);
+    }
+
+    /// Switches to `nujabes`, `graduation` or `default`. False for any other name.
+    pub fn set_theme(&mut self, name: &str) -> bool {
+        match (name, Theme::by_name(name)) {
+            ("default", _) => self.term.set_theme(None),
+            (_, Some(theme)) => self.term.set_theme(Some(&theme)),
+            _ => return false,
+        }
+        true
     }
 
     pub fn take_replies(&mut self) -> Vec<u8> {

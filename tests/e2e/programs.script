@@ -1,0 +1,22 @@
+# Real full-screen programs, through the alternate screen and back.
+wait 800
+type PS1='$ '\r
+wait 200
+type vim -u NONE -c 'set noswapfile' /tmp/glyphium-e2e-vim\r
+wait 1000
+type iwritten-in-vim
+key Escape
+wait 300
+expect-screen written-in-vim
+screenshot vim.png
+type :q!\r
+wait 500
+type seq 1 500 | less\r
+wait 500
+expect-screen 23
+key PageDown
+wait 300
+screenshot less.png
+type q
+wait 300
+quit

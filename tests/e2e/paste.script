@@ -1,0 +1,13 @@
+# Multi-line paste without bracketed paste asks first. Bash 3.2 has bracketed paste off.
+wait 800
+type PS1='$ '\r
+wait 200
+paste echo pasted-$((1+1))\necho pasted-$((2+2))\n
+wait 400
+screenshot paste-banner.png
+expect-not-screen pasted-
+paste echo pasted-$((1+1))\necho pasted-$((2+2))\n
+wait 500
+expect-screen pasted-2
+expect-screen pasted-4
+quit

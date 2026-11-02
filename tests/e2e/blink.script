@@ -1,0 +1,7 @@
+# A blinking cursor redraws at the blink rate, no faster and no slower.
+wait 800
+type printf '\033[1 q'\r
+wait 400
+report-idle 3000
+expect-blink
+quit

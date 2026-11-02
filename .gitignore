@@ -6,3 +6,7 @@ zig-out/
 fixtures/generated/
 .DS_Store
 *.rgba
+.vercel/
+.env
+.env.*
+!.env.example

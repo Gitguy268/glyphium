@@ -1,0 +1,14 @@
+# Losing the GPU device recreates GPU state from the frames; the shell keeps running.
+wait 800
+type PS1='$ '\r
+wait 200
+type export SURVIVES=yes; echo before-$((3+3))\r
+wait 300
+expect-screen before-6
+lose-device
+wait 1000
+type echo after-$SURVIVES\r
+wait 500
+expect-screen after-yes
+screenshot after-loss.png
+quit

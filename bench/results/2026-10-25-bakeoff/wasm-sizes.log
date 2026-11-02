@@ -1,0 +1,72 @@
+warning: use of deprecated associated function `core::num::<impl u32>::max_value`: replaced by the `MAX` associated constant on this type
+    --> third_party/wezterm-escape-parser/src/csi.rs:1314:77
+     |
+1314 |                 if top.as_one_based() == 1 && bottom.as_one_based() == u32::max_value() {
+     |                                                                             ^^^^^^^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated associated function `core::num::<impl u32>::max_value`: replaced by the `MAX` associated constant on this type
+    --> third_party/wezterm-escape-parser/src/csi.rs:1321:77
+     |
+1321 |                 if left.as_one_based() == 1 && right.as_one_based() == u32::max_value() {
+     |                                                                             ^^^^^^^^^
+
+warning: use of deprecated associated function `core::num::<impl u8>::max_value`: replaced by the `MAX` associated constant on this type
+    --> third_party/wezterm-escape-parser/src/csi.rs:1736:36
+     |
+1736 |             if *v <= i64::from(u8::max_value()) {
+     |                                    ^^^^^^^^^
+
+warning: use of deprecated associated function `core::num::<impl u32>::max_value`: replaced by the `MAX` associated constant on this type
+    --> third_party/wezterm-escape-parser/src/csi.rs:1759:64
+     |
+1759 |         CsiParam::Integer(v) if *v > 0 && *v <= i64::from(u32::max_value()) => Ok(*v as u32),
+     |                                                                ^^^^^^^^^
+
+warning: use of deprecated associated function `core::num::<impl u32>::max_value`: replaced by the `MAX` associated constant on this type
+    --> third_party/wezterm-escape-parser/src/csi.rs:2104:44
+     |
+2104 |                 bottom: OneBased::new(u32::max_value()),
+     |                                            ^^^^^^^^^
+
+warning: use of deprecated associated function `core::num::<impl u32>::max_value`: replaced by the `MAX` associated constant on this type
+    --> third_party/wezterm-escape-parser/src/csi.rs:2111:48
+     |
+2111 |                     bottom: OneBased::new(u32::max_value()),
+     |                                                ^^^^^^^^^
+
+warning: use of deprecated associated function `core::num::<impl u32>::max_value`: replaced by the `MAX` associated constant on this type
+    --> third_party/wezterm-escape-parser/src/csi.rs:2191:47
+     |
+2191 |                     right: OneBased::new(u32::max_value()),
+     |                                               ^^^^^^^^^
+
+warning: use of deprecated associated function `core::num::<impl u8>::max_value`: replaced by the `MAX` associated constant on this type
+   --> third_party/wezterm-escape-parser/src/esc.rs:145:43
+    |
+145 |                 if packed > u16::from(u8::max_value()) {
+    |                                           ^^^^^^^^^
+
+warning: use of deprecated associated function `core::num::<impl u32>::max_value`: replaced by the `MAX` associated constant on this type
+   --> third_party/wezterm-escape-parser/src/lib.rs:576:68
+    |
+576 |             CsiParam::Integer(v) if *v > 0 && *v <= i64::from(u32::max_value()) => {
+    |                                                                    ^^^^^^^^^
+
+warning: use of deprecated associated function `core::num::<impl u32>::max_value`: replaced by the `MAX` associated constant on this type
+   --> third_party/wezterm-escape-parser/src/lib.rs:588:29
+    |
+588 |                 value: u32::max_value(),
+    |                             ^^^^^^^^^
+
+warning: use of deprecated associated function `core::num::<impl u32>::max_value`: replaced by the `MAX` associated constant on this type
+   --> third_party/wezterm-escape-parser/src/lib.rs:590:68
+    |
+590 |             CsiParam::Integer(v) if *v > 0 && *v <= i64::from(u32::max_value()) => {
+    |                                                                    ^^^^^^^^^
+
+core	wasm_bytes	wasm_opt_Oz_bytes	gzip9_bytes
+ghostty	607039	475059	154484
+alacritty	271740	133943	54812
+wezterm	3676087	2110048	812133

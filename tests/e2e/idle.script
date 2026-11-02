@@ -1,0 +1,5 @@
+# A quiet terminal does not draw: at most one draw per cursor blink.
+wait 1000
+report-idle 3000
+expect-idle
+quit

@@ -1,0 +1,15 @@
+# Typing reaches the shell and the answer reaches the screen.
+wait 800
+type PS1='$ '\r
+wait 200
+type echo hello-$((40+2))\r
+wait 400
+expect-screen hello-42
+key ArrowUp
+key Enter
+wait 400
+type printf '\033[31mred\033[0m wide:日本語 emoji:🙂'; echo\r
+wait 400
+expect-screen red wide:日本語
+screenshot basics.png
+quit

@@ -71,6 +71,8 @@ pub struct Renderer {
     glyphs: Glyphs,
     /// Bumped when cached glyph positions die (eviction, font change): views rebuild.
     glyph_generation: u64,
+    /// What the pipeline draws to; offscreen targets must match it.
+    format: wgpu::TextureFormat,
     pub stats: Stats,
 }
 
@@ -213,6 +215,7 @@ impl Renderer {
             color_atlas,
             glyphs: Glyphs::new(fonts),
             glyph_generation: 0,
+            format,
             stats: Stats::default(),
         }
     }
@@ -259,6 +262,10 @@ impl Renderer {
 
     pub fn device(&self) -> &wgpu::Device {
         &self.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
     }
 
     pub fn metrics(&self) -> CellMetrics {
@@ -333,6 +340,9 @@ impl Renderer {
 
     fn upload_instances(&mut self, view: &mut PaneView) {
         view.scratch.clear();
+        // Fills the pane, including any pixels left over below or beside the last cell; the
+        // draw's scissor rectangle clips it to the pane.
+        view.scratch.push(solid(0.0, 0.0, 65536.0, 65536.0, view.background));
         for r in &view.rows {
             view.scratch.extend_from_slice(&r.back);
         }
@@ -376,7 +386,11 @@ impl Renderer {
         let left = (x * m.width) as f32;
         let span = (m.width * cell.width as u32) as f32;
         let selected = cell.attrs & attrs::SELECTED != 0;
-        let (fg, bg) = if selected { (frame.background, Some(frame.foreground)) } else { (cell.fg, cell.bg) };
+        let (fg, bg) = match (selected, frame.selection) {
+            (true, Some(selection)) => (cell.fg, Some(selection)),
+            (true, None) => (frame.background, Some(frame.foreground)),
+            (false, _) => (cell.fg, cell.bg),
+        };
         if let Some(bg) = bg {
             out.back.push(solid(left, top, span, m.height as f32, rgba(bg, 1.0)));
         }
@@ -485,7 +499,7 @@ impl Renderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: OFFSCREEN_FORMAT,
+            format: self.format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
@@ -522,6 +536,9 @@ impl Renderer {
         }
         drop(mapped);
         readback.unmap();
+        if matches!(self.format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb) {
+            out.chunks_exact_mut(4).for_each(|px| px.swap(0, 2));
+        }
         out
     }
 }

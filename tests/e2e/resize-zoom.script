@@ -1,0 +1,25 @@
+# Window size and font size both reach the PTY: the shell's `stty size` changes.
+wait 800
+type PS1='$ '\r
+wait 200
+resize 800 500
+wait 400
+type A=$(stty size)\r
+wait 200
+zoom 8
+wait 400
+type [ "$(stty size)" != "$A" ] && echo zoom-$((1+1))-changed\r
+wait 300
+expect-screen zoom-2-changed
+type B=$(stty size)\r
+wait 200
+# A storm of sizes settles on the last one.
+resize 1400 900
+resize 900 700
+resize 1100 800
+wait 500
+type [ "$(stty size)" != "$B" ] && echo resize-$((1+1))-changed\r
+wait 300
+expect-screen resize-2-changed
+screenshot size-final.png
+quit

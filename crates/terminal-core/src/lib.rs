@@ -6,6 +6,9 @@
 //! render-state API, which reports dirty rows, so an unchanged row costs nothing.
 
 pub mod input;
+pub mod theme;
+
+pub use theme::Theme;
 
 use std::ffi::c_void;
 use std::mem::{MaybeUninit, size_of};
@@ -91,6 +94,10 @@ pub struct Frame {
     pub cursor: Cursor,
     pub background: Rgb,
     pub foreground: Rgb,
+    /// Background of selected text. `None` draws selections as inverted colours.
+    pub selection: Option<Rgb>,
+    /// Which `set_theme` call the cells were read under; a change forces a full redraw.
+    pub theme_generation: u64,
     /// The whole frame must be redrawn (resize, screen switch, palette change).
     pub full_redraw: bool,
 }
@@ -125,6 +132,9 @@ pub struct Terminal {
     // Boxed so the pointer handed to the write-pty callback stays put.
     replies: Box<Vec<u8>>,
     encoders: input::Encoders,
+    force_dirty: Vec<usize>,
+    selection: Option<Rgb>,
+    theme_generation: u64,
 }
 
 impl Terminal {
@@ -150,7 +160,33 @@ impl Terminal {
             let cluster = GhosttyTerminalModeConfig { mode: MODE_GRAPHEME_CLUSTER, value: true };
             check(ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_MODE_DEFAULT, &cluster as *const _ as *const c_void), "mode 2027");
         }
-        Self { term, render, row_iter, row_cells, replies, encoders: input::Encoders::new() }
+        Self { term, render, row_iter, row_cells, replies, encoders: input::Encoders::new(), force_dirty: vec![], selection: None, theme_generation: 0 }
+    }
+
+    /// Sets the default colours, or restores Ghostty's with `None`. Colours a program set
+    /// through OSC stay until it resets them.
+    pub fn set_theme(&mut self, theme: Option<&Theme>) {
+        let raw = |c: Rgb| GhosttyColorRgb { r: c.r, g: c.g, b: c.b };
+        let set = |opt, value: *const c_void| check(unsafe { ghostty_terminal_set(self.term, opt, value) }, "theme colour");
+        match theme {
+            Some(t) => {
+                let mut palette: [GhosttyColorRgb; 256] = self.get(GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT);
+                for (slot, c) in palette.iter_mut().zip(t.ansi) {
+                    *slot = raw(c);
+                }
+                set(GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &raw(t.foreground) as *const _ as *const c_void);
+                set(GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &raw(t.background) as *const _ as *const c_void);
+                set(GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, &raw(t.cursor) as *const _ as *const c_void);
+                set(GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, &palette as *const _ as *const c_void);
+            }
+            None => {
+                for opt in [GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE] {
+                    set(opt, ptr::null());
+                }
+            }
+        }
+        self.selection = theme.map(|t| t.selection);
+        self.theme_generation += 1;
     }
 
     /// Feeds application output. Any chunking gives the same state (checked by `bench/bakeoff`).
@@ -223,18 +259,21 @@ impl Terminal {
 
         let resized = frame.cols != cols || frame.rows.len() != rows as usize;
         let colors_changed = frame.background != background || frame.foreground != foreground;
-        let full = dirty == GHOSTTY_RENDER_STATE_DIRTY_FULL || resized || colors_changed;
+        let theme_changed = frame.theme_generation != self.theme_generation;
+        let full = dirty == GHOSTTY_RENDER_STATE_DIRTY_FULL || resized || colors_changed || theme_changed;
         let cursor_changed = frame.cursor != cursor;
         frame.cols = cols;
         frame.rows.resize_with(rows as usize, Row::default);
         frame.background = background;
         frame.foreground = foreground;
+        frame.selection = self.selection;
+        frame.theme_generation = self.theme_generation;
         frame.cursor = cursor;
         frame.full_redraw = full;
         for row in &mut frame.rows {
             row.dirty = false;
         }
-        if dirty == GHOSTTY_RENDER_STATE_DIRTY_FALSE && !full {
+        if dirty == GHOSTTY_RENDER_STATE_DIRTY_FALSE && !full && self.force_dirty.is_empty() {
             return cursor_changed;
         }
 
@@ -243,7 +282,7 @@ impl Terminal {
         while unsafe { ghostty_render_state_row_iterator_next(self.row_iter) } && y < rows as usize {
             let mut row_dirty = false;
             check(unsafe { ghostty_render_state_row_get(self.row_iter, GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY, &mut row_dirty as *mut _ as *mut c_void) }, "row dirty");
-            if row_dirty || full {
+            if row_dirty || full || self.force_dirty.contains(&y) {
                 self.read_row(&mut frame.rows[y], cols as usize, foreground, background);
                 frame.rows[y].dirty = true;
                 let clean = false;
@@ -251,9 +290,15 @@ impl Terminal {
             }
             y += 1;
         }
+        self.force_dirty.clear();
         let clean: GhosttyRenderStateDirty = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
         check(unsafe { ghostty_render_state_set(self.render, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean as *const _ as *const c_void) }, "state clean");
         true
+    }
+
+    /// Forces a row to be re-read on the next `update_frame`, for callers that drew over it.
+    pub fn mark_row_dirty(&mut self, y: usize) {
+        self.force_dirty.push(y);
     }
 
     fn read_row(&mut self, row: &mut Row, cols: usize, foreground: Rgb, background: Rgb) {
@@ -525,6 +570,80 @@ mod tests {
         t.scroll_to_bottom();
         t.update_frame(&mut f);
         assert_eq!(line(&f, 0), "line8");
+    }
+
+    #[test]
+    fn theme_sets_default_and_ansi_colours() {
+        let theme = Theme::by_name("nujabes").unwrap();
+        let mut t = Terminal::new(40, 5, 100);
+        t.write(b"plain\x1b[31mred\x1b[91mbright");
+        t.set_theme(Some(&theme));
+        let mut f = Frame::default();
+        t.update_frame(&mut f);
+        assert_eq!((f.background, f.foreground), (theme.background, theme.foreground));
+        assert_eq!(f.cursor.color, Some(theme.cursor));
+        assert_eq!(f.selection, Some(theme.selection));
+        let c = &f.rows[0].cells;
+        assert_eq!((c[0].fg, c[5].fg, c[8].fg), (theme.foreground, theme.ansi[1], theme.ansi[9]));
+    }
+
+    #[test]
+    fn theme_keeps_the_rest_of_the_palette() {
+        let mut plain = Terminal::new(40, 5, 100);
+        let mut themed = Terminal::new(40, 5, 100);
+        themed.set_theme(Some(&Theme::by_name("graduation").unwrap()));
+        let bytes = b"\x1b[38;5;16ma\x1b[38;5;123mb\x1b[38;5;255mc";
+        plain.write(bytes);
+        themed.write(bytes);
+        let (mut a, mut b) = (Frame::default(), Frame::default());
+        plain.update_frame(&mut a);
+        themed.update_frame(&mut b);
+        for x in 0..3 {
+            assert_eq!(a.rows[0].cells[x].fg, b.rows[0].cells[x].fg, "column {x}");
+        }
+    }
+
+    #[test]
+    fn palette_only_theme_change_redraws_everything() {
+        let base = Theme::by_name("graduation").unwrap();
+        let mut other = base;
+        other.ansi[1] = Rgb { r: 1, g: 2, b: 3 };
+        let mut t = Terminal::new(40, 5, 100);
+        t.set_theme(Some(&base));
+        t.write(b"\x1b[31mred");
+        let mut f = Frame::default();
+        t.update_frame(&mut f);
+        assert!(!t.update_frame(&mut f), "no change, no redraw");
+        t.set_theme(Some(&other));
+        assert!(t.update_frame(&mut f));
+        assert!(f.full_redraw);
+        assert_eq!(f.rows[0].cells[0].fg, other.ansi[1]);
+        assert!(!t.update_frame(&mut f), "the change is consumed once");
+    }
+
+    #[test]
+    fn osc_palette_override_survives_a_theme_change() {
+        let theme = Theme::by_name("nujabes").unwrap();
+        let mut t = Terminal::new(40, 5, 100);
+        t.write(b"\x1b]4;1;rgb:01/02/03\x07\x1b[31mr\x1b[32mg");
+        t.set_theme(Some(&theme));
+        let mut f = Frame::default();
+        t.update_frame(&mut f);
+        assert_eq!(f.rows[0].cells[0].fg, Rgb { r: 1, g: 2, b: 3 });
+        assert_eq!(f.rows[0].cells[1].fg, theme.ansi[2]);
+    }
+
+    #[test]
+    fn no_theme_restores_the_defaults() {
+        let before = frame_of(b"\x1b[31mred");
+        let mut t = Terminal::new(40, 5, 100);
+        t.write(b"\x1b[31mred");
+        t.set_theme(Some(&Theme::by_name("nujabes").unwrap()));
+        t.set_theme(None);
+        let mut f = Frame::default();
+        t.update_frame(&mut f);
+        assert_eq!((f.background, f.foreground, f.selection), (before.background, before.foreground, None));
+        assert_eq!(f.rows[0].cells[0].fg, before.rows[0].cells[0].fg);
     }
 
     #[test]

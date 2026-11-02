@@ -265,6 +265,15 @@ impl Terminal {
         (unsafe { ghostty_terminal_grid_ref(self.term, pt, &mut r) } == GHOSTTY_SUCCESS).then_some(r)
     }
 
+    /// The hyperlink (OSC 8) at a viewport cell.
+    pub fn hyperlink_at(&self, cell: (u16, u16)) -> Option<String> {
+        let r = self.viewport_ref(cell.0, cell.1)?;
+        let mut uri = vec![0u8; 8192];
+        let mut n = 0usize;
+        let result = unsafe { ghostty_grid_ref_hyperlink_uri(&r, uri.as_mut_ptr(), uri.len(), &mut n) };
+        (result == GHOSTTY_SUCCESS && n > 0).then(|| String::from_utf8_lossy(&uri[..n]).into_owned())
+    }
+
     /// Selects from one viewport cell to another, inclusive. The terminal keeps the selection
     /// anchored to the text through scrolling and reflow.
     pub fn select(&mut self, start: (u16, u16), end: (u16, u16)) {

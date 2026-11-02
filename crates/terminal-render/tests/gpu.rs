@@ -1,7 +1,7 @@
 //! Renderer behaviour on a real GPU. Without an adapter each test prints SKIPPED and returns,
 //! so CI without a GPU stays green without claiming anything.
 
-use glyphium_terminal_core::{Frame, Terminal};
+use glyphium_terminal_core::{Frame, Rgb, Terminal, Theme};
 use glyphium_terminal_render::{FontConfig, OFFSCREEN_FORMAT, PaneRect, Renderer};
 
 fn renderer(size_px: f32) -> Option<Renderer> {
@@ -161,4 +161,26 @@ fn font_size_change_rebuilds() {
     r.set_font_size(32.0);
     assert!(r.metrics().height > before.height);
     assert!(r.update(&mut view, p.sync(b"")), "stale glyphs force a rebuild");
+}
+
+#[test]
+fn theme_colours_the_background_and_selection() {
+    let Some(mut r) = renderer(16.0) else { return };
+    let theme = Theme::by_name("nujabes").unwrap();
+    let mut view = r.new_view();
+    let mut p = Pane::new(20, 2);
+    p.term.set_theme(Some(&theme));
+    p.term.write(b"abc");
+    p.term.select((0, 0), (2, 0));
+    r.update(&mut view, p.sync(b""));
+    let size = r.pixel_size(20, 2);
+    let rgba = pollster::block_on(r.render_to_rgba(&view, p.frame.background, size));
+    let pixel = |x: u32, y: u32| {
+        let i = ((y * size.0 + x) * 4) as usize;
+        Rgb { r: rgba[i], g: rgba[i + 1], b: rgba[i + 2] }
+    };
+    let m = r.metrics();
+    assert_eq!(pixel(0, 0), theme.selection, "selected cell's corner");
+    assert_eq!(pixel(size.0 - 1, 0), theme.background, "unselected cell");
+    assert_eq!(pixel(size.0 - 1, m.height), theme.background, "empty row");
 }

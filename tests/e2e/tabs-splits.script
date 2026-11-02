@@ -1,0 +1,38 @@
+# Tabs and splits open real shells; closing the last pane of a tab closes the tab.
+wait 800
+expect-tabs 1
+expect-panes 1
+split-right
+wait 500
+expect-panes 2
+type echo pane-$((1+1))\r
+wait 300
+expect-screen pane-2
+split-down
+wait 500
+expect-panes 3
+type stty size\r
+wait 300
+screenshot splits.png
+new-tab
+wait 500
+expect-tabs 2
+expect-panes 1
+type echo tab-$((2+2))\r
+wait 300
+expect-screen tab-4
+screenshot tab-two.png
+next-tab
+wait 200
+expect-panes 3
+close-pane
+wait 200
+expect-panes 2
+close-pane
+close-pane
+wait 300
+expect-tabs 1
+expect-screen tab-4
+type exit\r
+wait 800
+quit

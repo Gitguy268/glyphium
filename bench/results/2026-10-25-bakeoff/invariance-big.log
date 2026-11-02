@@ -1,0 +1,22 @@
+ascii-flood  libghostty-vt       10 runs, 0 failures, 12.9s
+ascii-flood  alacritty_terminal  10 runs, 0 failures, 4.5s
+ascii-flood  wezterm-term        10 runs, 0 failures, 10.9s
+sgr-flood    libghostty-vt       10 runs, 0 failures, 14.1s
+sgr-flood    alacritty_terminal  10 runs, 0 failures, 31.7s
+sgr-flood    wezterm-term        10 runs, 0 failures, 64.4s
+
+thread 'main' (28266637) panicked at /rustc/b940084d7eb6a299eb4bfeb8e34901bc051e7ac4/library/std/src/io/stdio.rs:1168:9:
+failed printing to stdout: No space left on device (os error 28)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+unicode-mix  libghostty-vt       10 runs, 0 failures, 1.9s
+unicode-mix  alacritty_terminal  10 runs, 7 failures, 2.3s
+unicode-mix  wezterm-term        10 runs, 10 failures, 2.6s
+long-lines   libghostty-vt       10 runs, 0 failures, 3.9s
+long-lines   alacritty_terminal  10 runs, 0 failures, 6.3s
+long-lines   wezterm-term        10 runs, 0 failures, 8.9s
+tui-redraw   libghostty-vt       10 runs, 0 failures, 3.0s
+tui-redraw   alacritty_terminal  10 runs, 0 failures, 3.0s
+tui-redraw   wezterm-term        10 runs, 0 failures, 14.0s
+sgr-flood    libghostty-vt       10 runs, 0 failures, 1.7s
+sgr-flood    alacritty_terminal  10 runs, 0 failures, 3.9s
+sgr-flood    wezterm-term        10 runs, 0 failures, 15.3s
