@@ -12,6 +12,15 @@ A GPU-rendered terminal emulator in Rust, built on libghostty-vt.
 **Project page:** [gitguy268.github.io/glyphium](https://gitguy268.github.io/glyphium/) · [glyphium-red.vercel.app](https://glyphium-red.vercel.app)
 <!-- /live-links -->
 
+## Install with Homebrew
+
+```sh
+brew trust gitguy268/tap
+brew install gitguy268/tap/glyphium
+```
+
+This builds Ghostty's terminal core and glyphium from source on macOS (a few minutes; Rust and Zig are fetched as build tools). Then run `glyphium`.
+
 <!-- run-steps:start -->
 ## Run it locally, step by step
 
