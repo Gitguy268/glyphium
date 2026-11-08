@@ -130,6 +130,7 @@ pub struct Terminal {
     row_iter: GhosttyRenderStateRowIterator,
     row_cells: GhosttyRenderStateRowCells,
     // Boxed so the pointer handed to the write-pty callback stays put.
+    #[allow(clippy::box_collection)]
     replies: Box<Vec<u8>>,
     encoders: input::Encoders,
     force_dirty: Vec<usize>,
