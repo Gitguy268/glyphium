@@ -1,0 +1,21 @@
+# Themes switch every pane, and back to the default colours.
+wait 800
+type PS1='$ '\r
+wait 200
+type printf '\033[31mred \033[32mgreen \033[34mblue\033[0m'; echo\r
+wait 400
+split-right
+wait 600
+theme nujabes
+wait 300
+screenshot theme-nujabes.png
+theme graduation
+wait 300
+screenshot theme-graduation.png
+theme default
+wait 2000
+type echo still-$((3+4))\r
+wait 300
+expect-screen still-7
+screenshot theme-default.png
+quit

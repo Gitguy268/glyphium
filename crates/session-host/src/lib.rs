@@ -165,6 +165,21 @@ impl Session {
         self.pid
     }
 
+    /// True when the program this session started owns the terminal again, so a shell is at
+    /// its prompt rather than running a command; false while a job runs in the foreground.
+    /// `None` where this cannot be read (Windows, or the program has gone).
+    pub fn shell_idle(&self) -> Option<bool> {
+        #[cfg(unix)]
+        {
+            let leader = self.master.lock().unwrap().process_group_leader()?;
+            Some(leader as u32 == self.pid?)
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
+
     /// Ends the session: stops input and kills the program.
     pub fn close(&self) {
         let _ = self.input.send(WriterMessage::Stop);
@@ -175,5 +190,35 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn wait_for(session: &Session, idle: bool, limit: Duration) -> bool {
+        let end = Instant::now() + limit;
+        while Instant::now() < end {
+            if session.shell_idle() == Some(idle) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    #[test]
+    fn shell_idle_follows_the_foreground_job() {
+        let profile = Profile { command: Some("/bin/bash".into()), args: vec!["--norc".into(), "--noprofile".into()], ..Default::default() };
+        let dims = Dimensions { cols: 80, rows: 24, pixel_width: 0, pixel_height: 0 };
+        let (session, events) = Session::open(&profile, dims, 1, || {}).unwrap();
+        // Keep the queue drained so the shell never blocks writing its prompt.
+        thread::spawn(move || while events.recv().is_ok() {});
+        assert!(wait_for(&session, true, Duration::from_secs(5)), "idle at the prompt");
+        session.write(b"sleep 1\r".to_vec());
+        assert!(wait_for(&session, false, Duration::from_secs(2)), "busy while sleep runs");
+        assert!(wait_for(&session, true, Duration::from_secs(5)), "idle again after sleep");
     }
 }

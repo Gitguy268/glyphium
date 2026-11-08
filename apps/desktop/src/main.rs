@@ -4,7 +4,9 @@
 //! batches, and the screen is drawn at most once per display refresh and only if something
 //! changed. Panes in hidden tabs keep parsing but draw nothing.
 
+mod config;
 mod layout;
+mod queue;
 mod script;
 
 use std::collections::HashMap;
@@ -16,9 +18,10 @@ use std::time::{Duration, Instant};
 
 use glyphium_session_host::{Dimensions, Profile, Session, SessionEvent};
 use glyphium_terminal_core::input::{KeyAction, KeyInput, MouseAction, MouseButton, MouseInput, key_from_code, mods};
-use glyphium_terminal_core::{CursorStyle, Frame, Rgb, Terminal, attrs};
+use glyphium_terminal_core::{CursorStyle, Frame, Rgb, Terminal, Theme, attrs};
 use glyphium_terminal_render::{FontConfig, PaneRect, PaneView, Renderer};
 use layout::{Direction, Node, PaneId, Rect};
+use queue::CommandQueue;
 use script::Step;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
@@ -28,13 +31,13 @@ use winit::keyboard::{Key, ModifiersState, NamedKey, PhysicalKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use winit::window::{Window, WindowId};
 
-const FONT_PT: f32 = 13.0;
-const SCROLLBACK: usize = 10_000;
 /// Output parsed per pane before giving other events a turn.
 const DRAIN_BUDGET: usize = 2 * 1024 * 1024;
 const BLINK: Duration = Duration::from_millis(530);
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 const SEPARATOR: Rgb = Rgb { r: 70, g: 70, b: 70 };
+/// How long a short notice, such as the theme name, stays in the top bar.
+const NOTICE: Duration = Duration::from_millis(1500);
 
 struct Pane {
     term: Terminal,
@@ -48,6 +51,25 @@ struct Pane {
     exited: bool,
     /// Wheel movement not yet worth a whole row.
     scroll_accum: f32,
+    /// Commands to type once the shell is back at its prompt.
+    queue: CommandQueue,
+}
+
+/// What a key press does in the queue prompt.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PromptInput {
+    Text(String),
+    Paste(String),
+    Backspace,
+    Enter,
+    Escape,
+    ClearQueue,
+}
+
+/// The "Queue next:" line in the top bar, for the pane it was opened in.
+struct Prompt {
+    pane: PaneId,
+    text: String,
 }
 
 struct Tab {
@@ -95,6 +117,9 @@ enum Action {
     ZoomReset,
     PageUp,
     PageDown,
+    QueueCommand,
+    ClearQueue,
+    NextTheme,
     Quit,
 }
 
@@ -111,8 +136,19 @@ struct App {
     bar: Option<Bar>,
     banner: Option<String>,
     pending_paste: Option<String>,
+    prompt: Option<Prompt>,
+    notice: Option<(String, Instant)>,
+    /// Whether the panes were laid out below a top bar.
+    bar_shown: bool,
+    /// The session program is a shell whose prompt the queue can detect.
+    queue_supported: bool,
+    next_queue_poll: Instant,
+    config: config::Config,
+    theme: Option<String>,
     mods: ModifiersState,
     focused_window: bool,
+    /// Window focus changes so far; each one redraws, which idle checks allow for.
+    focus_changes: u64,
     blink_on: bool,
     next_blink: Instant,
     layout_dirty: bool,
@@ -137,7 +173,8 @@ fn pixel_rect(r: Rect) -> PaneRect {
 }
 
 impl App {
-    fn new(proxy: EventLoopProxy<()>, profile: Profile, script: Vec<Step>) -> Self {
+    fn new(proxy: EventLoopProxy<()>, profile: Profile, config: config::Config, script: Vec<Step>) -> Self {
+        let queue_supported = profile.command.as_deref().is_none_or(queue::is_shell);
         Self {
             proxy,
             wake_pending: Arc::new(AtomicBool::new(false)),
@@ -151,8 +188,16 @@ impl App {
             bar: None,
             banner: None,
             pending_paste: None,
+            prompt: None,
+            notice: None,
+            bar_shown: false,
+            queue_supported,
+            next_queue_poll: Instant::now(),
+            theme: config.theme.clone(),
+            config,
             mods: ModifiersState::empty(),
             focused_window: true,
+            focus_changes: 0,
             blink_on: true,
             next_blink: Instant::now() + BLINK,
             layout_dirty: true,
@@ -209,7 +254,7 @@ impl App {
         config.format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(config.format.remove_srgb_suffix());
         surface.configure(&device, &config);
         if self.font_px == 0.0 {
-            self.font_px = (FONT_PT * window.scale_factor() as f32).round();
+            self.font_px = (self.config.font_pt * window.scale_factor() as f32).round();
         }
         let fonts = FontConfig { size_px: self.font_px, system_fonts: true, ..Default::default() };
         let renderer = Renderer::new(device.clone(), queue, config.format, &fonts);
@@ -246,8 +291,10 @@ impl App {
         // The real size comes from the next layout pass, before any shell output is drawn.
         let dims = Dimensions { cols: 80, rows: 24, pixel_width: 0, pixel_height: 0 };
         let (session, events) = Session::open(&self.profile, dims, id, wake).expect("start shell");
+        let mut term = Terminal::new(dims.cols, dims.rows, self.config.scrollback);
+        term.set_theme(self.theme.as_deref().and_then(Theme::by_name).as_ref());
         let pane = Pane {
-            term: Terminal::new(dims.cols, dims.rows, SCROLLBACK),
+            term,
             frame: Frame::default(),
             view: gpu.renderer.new_view(),
             session,
@@ -257,6 +304,7 @@ impl App {
             rows: dims.rows,
             exited: false,
             scroll_accum: 0.0,
+            queue: CommandQueue::default(),
         };
         self.panes.insert(id, pane);
         self.layout_dirty = true;
@@ -292,6 +340,9 @@ impl App {
 
     fn close_pane(&mut self, id: PaneId) {
         self.panes.remove(&id);
+        if self.prompt.as_ref().is_some_and(|p| p.pane == id) {
+            self.prompt = None;
+        }
         let Some(index) = self.tabs.iter().position(|t| t.root.panes().contains(&id)) else { return };
         let tab = &mut self.tabs[index];
         match tab.root.clone().remove(id) {
@@ -321,7 +372,7 @@ impl App {
     /// The window area left for panes, below the top bar when one shows.
     fn content_area(&self) -> Rect {
         let size = self.window().inner_size();
-        let bar = if self.banner.is_some() || self.tabs.len() > 1 { self.gpu.as_ref().unwrap().renderer.metrics().height } else { 0 };
+        let bar = if self.bar_content().is_some() { self.gpu.as_ref().unwrap().renderer.metrics().height } else { 0 };
         Rect { x: 0, y: bar, w: size.width, h: size.height.saturating_sub(bar) }
     }
 
@@ -329,6 +380,7 @@ impl App {
     /// so a storm of resize events becomes one resize with the final size.
     fn apply_layout(&mut self) {
         self.layout_dirty = false;
+        self.bar_shown = self.bar_content().is_some();
         let area = self.content_area();
         let m = self.gpu.as_ref().unwrap().renderer.metrics();
         for tab in &self.tabs {
@@ -361,6 +413,7 @@ impl App {
                 match pane.events.try_recv() {
                     Ok(SessionEvent::Output { generation, bytes }) if generation == id => {
                         budget = budget.saturating_sub(bytes.len());
+                        pane.queue.saw_output(Instant::now());
                         pane.term.write(&bytes);
                         pane.session.write(pane.term.take_replies());
                         changed |= visible.contains(&id);
@@ -382,6 +435,7 @@ impl App {
         for id in ended {
             self.close_pane(id);
         }
+        changed |= self.poll_queues();
         if more {
             self.wake_pending.store(true, Ordering::SeqCst);
             let _ = self.proxy.send_event(());
@@ -389,26 +443,61 @@ impl App {
         changed
     }
 
-    fn update_bar(&mut self) -> bool {
-        let m = self.gpu.as_ref().unwrap().renderer.metrics();
-        let cols = (self.window().inner_size().width / m.width).max(1) as u16;
-        let text = if let Some(b) = &self.banner {
-            format!("\x1b[43;30m\x1b[K {b}\x1b[0m")
-        } else if self.tabs.len() > 1 {
-            let mut s = String::from("\x1b[48;5;236m\x1b[K");
+    /// What the top bar should show, in escape-coded text, or `None` for no bar. The paste
+    /// question wins, then the queue prompt, then a notice, then tabs and the queue.
+    fn bar_content(&self) -> Option<String> {
+        if let Some(b) = &self.banner {
+            return Some(format!("\x1b[43;30m\x1b[K {b}\x1b[0m"));
+        }
+        if let Some(p) = &self.prompt {
+            let waiting = self.panes.get(&p.pane).map_or(0, |pane| pane.queue.len());
+            let label = if waiting > 0 { format!("Queue next ({waiting} waiting):") } else { "Queue next:".to_string() };
+            // Keep the end of a long command in view, where the typing happens.
+            let room = (self.bar.as_ref().map_or(80, |b| b.cols as usize)).saturating_sub(label.chars().count() + 4).max(8);
+            let n = p.text.chars().count();
+            let shown: String = p.text.chars().skip(n.saturating_sub(room)).collect();
+            return Some(format!("\x1b[48;5;24;97m\x1b[K {label} {shown}\x1b[7m \x1b[0m"));
+        }
+        if let Some((text, _)) = &self.notice {
+            return Some(format!("\x1b[48;5;238;97m\x1b[K {text}\x1b[0m"));
+        }
+        let mut s = String::new();
+        if self.tabs.len() > 1 {
+            s.push_str("\x1b[48;5;236m\x1b[K");
             for (i, tab) in self.tabs.iter().enumerate() {
                 let title = self.panes.get(&tab.focused).map(|p| p.term.title()).unwrap_or_default();
                 let short: String = title.chars().take(24).collect();
-                let label = if short.is_empty() { format!(" {} ", i + 1) } else { format!(" {} {} ", i + 1, short) };
+                let queued: usize = tab.root.panes().iter().filter_map(|id| self.panes.get(id)).map(|p| p.queue.len()).sum();
+                let mark = if queued > 0 { format!(" ⏳{queued}") } else { String::new() };
+                let label = if short.is_empty() { format!(" {}{mark} ", i + 1) } else { format!(" {} {short}{mark} ", i + 1) };
                 if i == self.active {
                     s.push_str(&format!("\x1b[48;5;250;30m{label}\x1b[48;5;236;39m"));
                 } else {
                     s.push_str(&label);
                 }
             }
-            s.push_str("\x1b[0m");
-            s
-        } else {
+        }
+        let focused = self.tabs.get(self.active).and_then(|t| self.panes.get(&t.focused));
+        if let Some(pane) = focused.filter(|p| p.queue.len() > 0) {
+            let list: Vec<&str> = pane.queue.items().collect();
+            if s.is_empty() {
+                s.push_str("\x1b[48;5;24;97m\x1b[K");
+            } else {
+                s.push_str("  \x1b[48;5;24;97m");
+            }
+            s.push_str(&format!(" Queued ({}): {} ", list.len(), list.join(" → ")));
+        }
+        if s.is_empty() {
+            return None;
+        }
+        s.push_str("\x1b[0m");
+        Some(s)
+    }
+
+    fn update_bar(&mut self) -> bool {
+        let m = self.gpu.as_ref().unwrap().renderer.metrics();
+        let cols = (self.window().inner_size().width / m.width).max(1) as u16;
+        let Some(text) = self.bar_content() else {
             self.bar = None;
             return false;
         };
@@ -420,11 +509,113 @@ impl App {
             bar.text.clear();
         }
         if bar.text != text {
-            bar.term.write(b"\x1b[?25l\x1b[2J\x1b[H");
+            // No autowrap: text longer than the bar is cut off instead of scrolling it away.
+            bar.term.write(b"\x1b[?25l\x1b[?7l\x1b[2J\x1b[H");
             bar.term.write(text.as_bytes());
             bar.text = text;
         }
         true
+    }
+
+    /// Types the next queued command in every pane whose shell is ready for it, hidden tabs
+    /// included. True if what the bar shows may have changed.
+    fn poll_queues(&mut self) -> bool {
+        let now = Instant::now();
+        let mut changed = false;
+        for pane in self.panes.values_mut() {
+            if !pane.queue.active() {
+                continue;
+            }
+            if let Some(bytes) = pane.queue.poll(pane.session.shell_idle(), now) {
+                pane.term.scroll_to_bottom();
+                pane.session.write(bytes);
+                changed = true;
+            }
+        }
+        if changed {
+            self.request_redraw();
+        }
+        changed
+    }
+
+    /// Adds a command to a pane's queue; it runs at once if the shell is at its prompt.
+    fn queue_command(&mut self, id: PaneId, text: &str) {
+        let command: String = text.chars().filter(|c| !c.is_control()).collect();
+        let command = command.trim();
+        if command.is_empty() {
+            return;
+        }
+        if !self.queue_supported {
+            self.show_notice("The queue needs a shell: this pane runs another program.".into());
+            return;
+        }
+        let Some(pane) = self.panes.get_mut(&id) else { return };
+        pane.queue.push(command.to_string());
+        self.poll_queues();
+        self.next_queue_poll = Instant::now() + queue::POLL;
+        self.request_redraw();
+    }
+
+    fn show_notice(&mut self, text: String) {
+        self.notice = Some((text, Instant::now() + NOTICE));
+        self.request_redraw();
+    }
+
+    fn set_theme(&mut self, name: Option<String>) {
+        let theme = name.as_deref().and_then(Theme::by_name);
+        for pane in self.panes.values_mut() {
+            pane.term.set_theme(theme.as_ref());
+        }
+        self.show_notice(format!("Theme: {}", name.as_deref().unwrap_or("default")));
+        self.theme = name;
+        self.force_redraw = true;
+    }
+
+    /// A key while the queue prompt is open. Everything goes to the prompt, never the shell.
+    fn prompt_key(&mut self, event: &winit::event::KeyEvent, code: &str) {
+        let input = match self.shortcut(code, self.mods) {
+            Some(Action::Paste) => self.clipboard.as_mut().and_then(|c| c.get_text().ok()).map(PromptInput::Paste),
+            Some(Action::ClearQueue) => Some(PromptInput::ClearQueue),
+            Some(_) => None,
+            None => match &event.logical_key {
+                Key::Named(NamedKey::Escape) => Some(PromptInput::Escape),
+                Key::Named(NamedKey::Enter) => Some(PromptInput::Enter),
+                Key::Named(NamedKey::Backspace) => Some(PromptInput::Backspace),
+                _ if self.mods.control_key() || self.mods.super_key() => None,
+                _ => event.text_with_all_modifiers().map(|t| PromptInput::Text(t.to_string())),
+            },
+        };
+        if let Some(input) = input {
+            self.prompt_input(input);
+        }
+    }
+
+    fn prompt_input(&mut self, input: PromptInput) {
+        let Some(p) = &mut self.prompt else { return };
+        match input {
+            PromptInput::Text(text) => p.text.extend(text.chars().filter(|c| !c.is_control())),
+            // One line: a pasted newline must not become a second command or an early Enter.
+            PromptInput::Paste(text) => p.text.extend(text.chars().map(|c| if matches!(c, '\n' | '\r' | '\t') { ' ' } else { c }).filter(|c| !c.is_control())),
+            PromptInput::Escape => self.prompt = None,
+            PromptInput::Enter => {
+                let p = self.prompt.take().unwrap();
+                self.queue_command(p.pane, &p.text);
+            }
+            PromptInput::Backspace => {
+                if p.text.pop().is_none() {
+                    // Backspace on an empty line takes back the last queued command.
+                    if let Some(pane) = self.panes.get_mut(&p.pane) {
+                        pane.queue.pop_last();
+                    }
+                }
+            }
+            PromptInput::ClearQueue => {
+                if let Some(pane) = self.panes.get_mut(&p.pane) {
+                    pane.queue.clear();
+                }
+            }
+        }
+        self.request_redraw();
     }
 
     fn sync_title(&mut self) {
@@ -498,6 +689,9 @@ impl App {
         if self.gpu.as_ref().unwrap().lost.load(Ordering::SeqCst) {
             self.recover_gpu();
         }
+        if self.bar_content().is_some() != self.bar_shown {
+            self.layout_dirty = true;
+        }
         if self.layout_dirty {
             self.apply_layout();
         }
@@ -566,6 +760,9 @@ impl App {
             return None;
         }
         if m.alt_key() {
+            if code == "KeyT" {
+                return Some(Action::NextTheme);
+            }
             return Some(Action::Focus(match code {
                 "ArrowLeft" => Direction::Left,
                 "ArrowRight" => Direction::Right,
@@ -576,6 +773,9 @@ impl App {
         }
         let mac_shift = cfg!(target_os = "macos") && m.shift_key();
         Some(match code {
+            "KeyT" if mac_shift => Action::NextTheme,
+            "Enter" | "NumpadEnter" if m.shift_key() => Action::QueueCommand,
+            "Backspace" if m.shift_key() => Action::ClearQueue,
             "KeyT" => Action::NewTab,
             "KeyW" => Action::ClosePane,
             "KeyD" if mac_shift => Action::SplitDown,
@@ -637,13 +837,31 @@ impl App {
             }
             Action::ZoomIn => self.set_font(self.font_px + 2.0),
             Action::ZoomOut => self.set_font((self.font_px - 2.0).max(6.0)),
-            Action::ZoomReset => self.set_font((FONT_PT * self.window().scale_factor() as f32).round()),
+            Action::ZoomReset => self.set_font((self.config.font_pt * self.window().scale_factor() as f32).round()),
             Action::PageUp | Action::PageDown => {
                 if let Some(p) = self.focused_pane() {
                     let page = p.rows as isize - 1;
                     p.term.scroll_viewport(if action == Action::PageUp { -page } else { page });
                 }
                 self.request_redraw();
+            }
+            Action::QueueCommand => {
+                if let Some(id) = self.tabs.get(self.active).map(|t| t.focused) {
+                    self.clear_banner();
+                    self.preedit.clear();
+                    self.prompt = Some(Prompt { pane: id, text: String::new() });
+                    self.request_redraw();
+                }
+            }
+            Action::ClearQueue => {
+                if let Some(p) = self.focused_pane() {
+                    p.queue.clear();
+                }
+                self.request_redraw();
+            }
+            Action::NextTheme => {
+                let next = config::next_theme(self.theme.as_deref());
+                self.set_theme(next);
             }
             Action::Quit => {
                 self.panes.clear();
@@ -760,11 +978,11 @@ impl App {
                 if self.report_mouse(id, MouseAction::Press, Some(button)) || button != 1 {
                     return;
                 }
-                if self.mods.super_key() || (self.mods.control_key() && !cfg!(target_os = "macos")) {
-                    if let Some(uri) = self.panes[&id].term.hyperlink_at(cell) {
-                        open_link(&uri);
-                        return;
-                    }
+                if (self.mods.super_key() || (self.mods.control_key() && !cfg!(target_os = "macos")))
+                    && let Some(uri) = self.panes[&id].term.hyperlink_at(cell)
+                {
+                    open_link(&uri);
+                    return;
                 }
                 let now = Instant::now();
                 let double = self.last_click.is_some_and(|(t, p, c)| now - t < DOUBLE_CLICK && p == id && c == cell);
@@ -792,12 +1010,12 @@ impl App {
         if let Some(drag) = &mut self.drag {
             let pane_id = drag.pane;
             let start = drag.start;
-            if let Some((id, cell)) = self.pane_at(pos.x as f32, pos.y as f32).filter(|(id, _)| *id == pane_id) {
-                if cell != start || self.drag.as_ref().unwrap().moved {
-                    self.drag.as_mut().unwrap().moved = true;
-                    self.panes.get_mut(&id).unwrap().term.select(start, cell);
-                    self.request_redraw();
-                }
+            if let Some((id, cell)) = self.pane_at(pos.x as f32, pos.y as f32).filter(|(id, _)| *id == pane_id)
+                && (cell != start || self.drag.as_ref().unwrap().moved)
+            {
+                self.drag.as_mut().unwrap().moved = true;
+                self.panes.get_mut(&id).unwrap().term.select(start, cell);
+                self.request_redraw();
             }
             return;
         }
@@ -947,19 +1165,43 @@ impl App {
                 Step::ReportIdleFrames(ms) => {
                     // Draw count across a quiet interval, with the cursor not blinking.
                     let before = self.gpu.as_ref().unwrap().renderer.stats.draws;
-                    self.report.get_or_insert_with(Default::default).idle_baseline = Some((before, Instant::now(), ms));
+                    let report = self.report.get_or_insert_with(Default::default);
+                    report.idle_baseline = Some((before, Instant::now(), ms));
+                    report.focus_baseline = self.focus_changes;
                     self.script_at = Instant::now() + Duration::from_millis(ms);
                 }
-                Step::ExpectIdle => {
+                Step::ExpectIdle(limit) => {
                     let (before, _, ms) = self.report.as_ref().and_then(|r| r.idle_baseline).expect("report-idle first");
                     let draws = self.gpu.as_ref().unwrap().renderer.stats.draws - before;
-                    // One draw per blink at most: a static cursor would be zero.
-                    let allowed = ms / BLINK.as_millis() as u64 + 2;
+                    // Without a limit, one draw per blink at most; a steady cursor should be zero.
+                    // Another window taking focus redraws for real (the cursor turns hollow), so
+                    // each focus change adds one allowed draw.
+                    let focus = self.focus_changes - self.report.as_ref().map_or(0, |r| r.focus_baseline);
+                    let allowed = limit.unwrap_or(ms / BLINK.as_millis() as u64 + 2) + focus;
                     let ok = draws <= allowed;
-                    self.report.get_or_insert_with(Default::default).check(&format!("idle: at most {allowed} draws in {ms} ms"), ok, &format!("{draws} draws"));
+                    self.report.get_or_insert_with(Default::default).check(&format!("idle: {draws} draws in {ms} ms, {focus} focus changes, at most {allowed} allowed"), ok, "");
                     if !ok {
                         self.exit_code = 1;
                     }
+                }
+                Step::OpenQueue => self.run_action(Action::QueueCommand, event_loop),
+                Step::Prompt(input) => self.prompt_input(input),
+                Step::Queue(text) => {
+                    if let Some(id) = self.tabs.get(self.active).map(|t| t.focused) {
+                        self.queue_command(id, &text);
+                    }
+                }
+                Step::ExpectQueued(n) => {
+                    let got = self.focused_pane().map_or(0, |p| p.queue.len());
+                    self.report.get_or_insert_with(Default::default).check(&format!("{n} commands queued"), got == n, &format!("got {got}"));
+                    if got != n {
+                        self.exit_code = 1;
+                    }
+                }
+                Step::Theme(name) => {
+                    let name = (name != "default").then_some(name);
+                    assert!(name.as_deref().is_none_or(|n| Theme::by_name(n).is_some()), "unknown theme {name:?}");
+                    self.set_theme(name);
                 }
                 Step::Quit => {
                     if let Some(r) = &self.report {
@@ -1050,10 +1292,11 @@ impl ApplicationHandler<()> for App {
                 self.request_redraw();
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                self.set_font((FONT_PT * scale_factor as f32).round());
+                self.set_font((self.config.font_pt * scale_factor as f32).round());
             }
             WindowEvent::Focused(focused) => {
                 self.focused_window = focused;
+                self.focus_changes += 1;
                 if let Some(pane) = self.focused_pane() {
                     let bytes = pane.term.encode_focus(focused);
                     pane.session.write(bytes);
@@ -1067,6 +1310,16 @@ impl ApplicationHandler<()> for App {
                     PhysicalKey::Code(c) => format!("{c:?}"),
                     PhysicalKey::Unidentified(_) => String::new(),
                 };
+                if self.prompt.is_some() {
+                    if event.state == ElementState::Pressed {
+                        if self.shortcut(&code, self.mods) == Some(Action::Quit) {
+                            self.run_action(Action::Quit, event_loop);
+                            return;
+                        }
+                        self.prompt_key(&event, &code);
+                    }
+                    return;
+                }
                 if event.state == ElementState::Pressed {
                     // Holding a modifier on the way to the paste shortcut must not cancel it.
                     let modifier = matches!(event.logical_key, Key::Named(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super | NamedKey::Meta));
@@ -1103,14 +1356,17 @@ impl ApplicationHandler<()> for App {
             WindowEvent::Ime(ime) => match ime {
                 Ime::Commit(text) => {
                     self.preedit.clear();
-                    if let Some(pane) = self.focused_pane() {
+                    if let Some(p) = &mut self.prompt {
+                        p.text.extend(text.chars().filter(|c| !c.is_control()));
+                    } else if let Some(pane) = self.focused_pane() {
                         pane.term.scroll_to_bottom();
                         pane.session.write(text.into_bytes());
                     }
                     self.request_redraw();
                 }
                 Ime::Preedit(text, _) => {
-                    self.preedit = text;
+                    // Composition draws at the pane's cursor; the queue prompt takes commits only.
+                    self.preedit = if self.prompt.is_some() { String::new() } else { text };
                     self.request_redraw();
                 }
                 Ime::Enabled | Ime::Disabled => {}
@@ -1147,12 +1403,25 @@ impl ApplicationHandler<()> for App {
             self.next_blink = now + BLINK;
             self.request_redraw();
         }
-        let script_wake = (!self.script.is_empty()).then_some(self.script_at);
-        let blink_wake = blinking.then_some(self.next_blink);
-        event_loop.set_control_flow(match (script_wake, blink_wake) {
-            (Some(a), Some(b)) => ControlFlow::WaitUntil(a.min(b)),
-            (Some(a), None) | (None, Some(a)) => ControlFlow::WaitUntil(a),
-            (None, None) => ControlFlow::Wait,
+        if self.notice.as_ref().is_some_and(|(_, until)| now >= *until) {
+            self.notice = None;
+            self.request_redraw();
+        }
+        // Only a pane with something queued or running from the queue is ever polled, so a
+        // terminal with an empty queue still sleeps until real input or output.
+        let queue_wake = self.panes.values().any(|p| p.queue.active()).then(|| {
+            let enter_due = self.panes.values().filter_map(|p| p.queue.enter_due()).any(|t| now >= t);
+            if now >= self.next_queue_poll || enter_due {
+                self.poll_queues();
+                self.next_queue_poll = now + queue::POLL;
+            }
+            // A typed command's Enter may be due sooner than the next poll.
+            self.panes.values().filter_map(|p| p.queue.enter_due()).fold(self.next_queue_poll, Instant::min)
+        });
+        let wakes = [(!self.script.is_empty()).then_some(self.script_at), blinking.then_some(self.next_blink), queue_wake, self.notice.as_ref().map(|(_, t)| *t)];
+        event_loop.set_control_flow(match wakes.into_iter().flatten().min() {
+            Some(t) => ControlFlow::WaitUntil(t),
+            None => ControlFlow::Wait,
         });
     }
 }
@@ -1161,6 +1430,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut profile = Profile::default();
     let mut script_steps = vec![];
+    let mut config_flag = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1174,12 +1444,16 @@ fn main() {
                 let path = args.get(i).expect("--script FILE");
                 script_steps = script::parse(&std::fs::read_to_string(path).expect("read script"));
             }
+            "--config" => {
+                i += 1;
+                config_flag = Some(args.get(i).expect("--config FILE").into());
+            }
             "--version" => {
                 println!("glyphium {}", env!("CARGO_PKG_VERSION"));
                 return;
             }
             other => {
-                eprintln!("usage: glyphium [--script FILE] [-e COMMAND [ARGS...]]\nunknown argument: {other}");
+                eprintln!("usage: glyphium [--config FILE] [--script FILE] [-e COMMAND [ARGS...]]\nunknown argument: {other}");
                 std::process::exit(2);
             }
         }
@@ -1190,7 +1464,8 @@ fn main() {
     }
     let event_loop = EventLoop::<()>::with_user_event().build().expect("event loop");
     let proxy = event_loop.create_proxy();
-    let mut app = App::new(proxy, profile, script_steps);
+    let config = config::load(config::path(config_flag).as_deref());
+    let mut app = App::new(proxy, profile, config, script_steps);
     event_loop.run_app(&mut app).expect("event loop");
     std::process::exit(app.exit_code);
 }

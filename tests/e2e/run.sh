@@ -11,7 +11,7 @@ failed=0
 for n in "${names[@]}"; do
   echo "== $n"
   # A hung app must fail the run rather than hang it, so each script gets a time limit.
-  "$bin" --script "$here/$n.script" -e /bin/bash --norc --noprofile &
+  "$bin" --config /nonexistent --script "$here/$n.script" -e /bin/bash --norc --noprofile &
   pid=$!
   ( sleep 90; kill -9 $pid 2>/dev/null ) & watchdog=$!
   wait $pid; rc=$?

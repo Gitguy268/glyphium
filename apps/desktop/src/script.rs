@@ -32,7 +32,17 @@ pub enum Step {
     ExpectPanes(usize),
     ExpectTabs(usize),
     ReportIdleFrames(u64),
-    ExpectIdle,
+    /// Draws allowed across the idle interval; `None` allows one per cursor blink.
+    ExpectIdle(Option<u64>),
+    /// Queues a command in the focused pane, as Enter in the queue prompt does.
+    Queue(String),
+    ExpectQueued(usize),
+    /// Opens the queue prompt, as its shortcut does.
+    OpenQueue,
+    /// Input to the open queue prompt.
+    Prompt(crate::PromptInput),
+    /// `default` or a theme name.
+    Theme(String),
     Quit,
 }
 
@@ -81,7 +91,20 @@ pub fn parse(source: &str) -> Vec<Step> {
                 "expect-panes" => Step::ExpectPanes(arg.parse().unwrap()),
                 "expect-tabs" => Step::ExpectTabs(arg.parse().unwrap()),
                 "report-idle" => Step::ReportIdleFrames(arg.parse().unwrap()),
-                "expect-idle" => Step::ExpectIdle,
+                "expect-idle" => Step::ExpectIdle(if arg.is_empty() { None } else { Some(arg.parse().expect("expect-idle [DRAWS]")) }),
+                "queue" => Step::Queue(unescape(arg)),
+                "open-queue" => Step::OpenQueue,
+                "prompt-type" => Step::Prompt(crate::PromptInput::Text(unescape(arg))),
+                "prompt-paste" => Step::Prompt(crate::PromptInput::Paste(unescape(arg))),
+                "prompt-key" => Step::Prompt(match arg {
+                    "Enter" => crate::PromptInput::Enter,
+                    "Escape" => crate::PromptInput::Escape,
+                    "Backspace" => crate::PromptInput::Backspace,
+                    "ClearQueue" => crate::PromptInput::ClearQueue,
+                    _ => panic!("prompt-key Enter|Escape|Backspace|ClearQueue"),
+                }),
+                "expect-queued" => Step::ExpectQueued(arg.parse().expect("expect-queued N")),
+                "theme" => Step::Theme(arg.into()),
                 "quit" => Step::Quit,
                 _ => panic!("unknown script step: {line}"),
             }
@@ -98,6 +121,8 @@ pub fn screen_text(frame: &Frame) -> String {
 pub struct Report {
     lines: Vec<String>,
     pub idle_baseline: Option<(u64, Instant, u64)>,
+    /// Window focus changes when the idle interval began.
+    pub focus_baseline: u64,
 }
 
 impl Report {
