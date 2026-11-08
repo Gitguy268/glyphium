@@ -108,3 +108,19 @@ Stopped at 3.0 GB free (limit 5 GB; several sessions share this disk). Nothing h
   - A steady cursor drawing nothing: `idle.script` allows up to 7 draws, the same as the blink rate, and does not print the count, so a redraw on every blink tick would pass. Next time set `\e[2 q`, expect 0 draws and print the count.
 - Blocked: vttest. The permission system refused downloading and compiling it, so M2's vttest gate is open.
 - Next, in order: user try-out of real input; vttest once allowed; web client (canvas surface, input bridge; needs a wasm build, so free disk first); theme choice in `apps/desktop`.
+
+## 2026-11-08: command queue, themes and config, CI
+
+- **Command queue** (`apps/desktop/src/queue.rs`). Cmd+Shift+Enter opens a "Queue next:" line in the top bar. A queued command is typed into the shell once the shell is back at its prompt.
+  - Detection: `Session::shell_idle()` in session-host compares the PTY's foreground process group (`tcgetpgrp` through portable-pty) with the shell's pid. A real bash test covers idle, then busy during `sleep 1`, then idle again.
+  - One command per completion. The next one waits until the last was seen busy and the shell is idle again, or, for builtins, until output has been quiet for 150 ms. So `head -n1` cannot eat the next queued command; `queue.script` checks exactly that.
+  - Command text and Enter go as two writes, Enter after the echo (or 50 ms). Sent together, bash 3.2's readline redraws the line after Enter and glues the output to a second copy of the command. zsh never had the problem.
+  - Turned off when `-e` runs a program that is not a shell. Windows returns `None`, so it is off there too. A builtin waiting on input (`read`) looks idle.
+  - The queue is polled every 100 ms only while some pane has one, so an idle terminal still wakes for nothing.
+- **Config file** (`apps/desktop/src/config.rs`): `font_size`, `theme`, `scrollback` from `--config`, `$GLYPHIUM_CONFIG` or `~/.config/glyphium/config.toml`. Bad lines print a warning and keep the default. Cmd+Shift+T (Ctrl+Shift+Alt+T elsewhere) cycles default, Nujabes, Graduation; new panes get the current theme. `tests/e2e/run.sh` passes `--config /nonexistent`.
+- **Idle test** now sets a steady cursor and expects 0 draws, printing the count. Another window taking focus redraws for real, so each focus change adds one allowed draw; that happened in about 1 of 4 runs on this shared desktop.
+- New script steps: `queue`, `open-queue`, `prompt-type`, `prompt-paste`, `prompt-key`, `expect-queued`, `theme`, `expect-idle [N]`. New scripts: `queue.script` (19 checks), `themes.script`.
+- **CI** (`.github/workflows/ci.yml`, macOS): builds libghostty-vt at `cec8b92` with Zig 0.17.0 (cached), then clippy `-D warnings` and tests for the four packages. The 5 existing clippy warnings were fixed (the boxed replies buffer is deliberate and allowed).
+- Dependabot PRs #1–#3 merged; #4 (checkout v7) needed a rebase.
+- Verified: unit tests, fuzz and GPU tests, clippy, all 11 e2e scripts exit 0; screenshots read for the queue bar, the prompt and the Nujabes theme.
+- Not tested: real key presses for the new shortcuts (scripts enter past the OS event), IME commit into the prompt, Linux and Windows. Under heavy load (load average 12) one launch took longer than 12 s to start; it passed when the load dropped.
