@@ -8,21 +8,23 @@ mod config;
 mod layout;
 mod queue;
 mod script;
+mod themes;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use glyphium_session_host::{Dimensions, Profile, Session, SessionEvent};
 use glyphium_terminal_core::input::{KeyAction, KeyInput, MouseAction, MouseButton, MouseInput, key_from_code, mods};
-use glyphium_terminal_core::{CursorStyle, Frame, Rgb, Terminal, Theme, attrs};
+use glyphium_terminal_core::{CursorStyle, Frame, Rgb, Terminal, attrs};
 use glyphium_terminal_render::{FontConfig, PaneRect, PaneView, Renderer};
 use layout::{Direction, Node, PaneId, Rect};
 use queue::CommandQueue;
 use script::Step;
+use themes::Themes;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, Ime, MouseScrollDelta, WindowEvent};
@@ -144,7 +146,16 @@ struct App {
     queue_supported: bool,
     next_queue_poll: Instant,
     config: config::Config,
-    theme: Option<String>,
+    config_path: Option<PathBuf>,
+    /// Newest modification time of the config file and theme folder at the last load.
+    config_stamp: Option<SystemTime>,
+    themes: Themes,
+    /// The chosen theme: `auto`, `default`, a name or a path.
+    theme: String,
+    /// The window's appearance, for `auto`; `None` until the window reports it.
+    dark_appearance: Option<bool>,
+    /// Window background opacity from the theme or config.
+    opacity: f32,
     mods: ModifiersState,
     focused_window: bool,
     /// Window focus changes so far; each one redraws, which idle checks allow for.
@@ -173,8 +184,15 @@ fn pixel_rect(r: Rect) -> PaneRect {
 }
 
 impl App {
-    fn new(proxy: EventLoopProxy<()>, profile: Profile, config: config::Config, script: Vec<Step>) -> Self {
+    fn new(proxy: EventLoopProxy<()>, profile: Profile, config_path: Option<PathBuf>, script: Vec<Step>) -> Self {
         let queue_supported = profile.command.as_deref().is_none_or(queue::is_shell);
+        let (themes, mut warnings) = Themes::load(themes_dir(config_path.as_deref()).as_deref());
+        let (config, w) = config::load(config_path.as_deref(), &|n| themes.exists(n));
+        warnings.extend(w);
+        for w in &warnings {
+            eprintln!("glyphium: {w}");
+        }
+        let config_stamp = config_stamp(config_path.as_deref());
         Self {
             proxy,
             wake_pending: Arc::new(AtomicBool::new(false)),
@@ -189,12 +207,17 @@ impl App {
             banner: None,
             pending_paste: None,
             prompt: None,
-            notice: None,
             bar_shown: false,
             queue_supported,
             next_queue_poll: Instant::now(),
             theme: config.theme.clone(),
+            notice: warnings.first().map(|w| (w.clone(), Instant::now() + NOTICE * 3)),
             config,
+            config_path,
+            config_stamp,
+            themes,
+            dark_appearance: None,
+            opacity: 1.0,
             mods: ModifiersState::empty(),
             focused_window: true,
             focus_changes: 0,
@@ -257,7 +280,8 @@ impl App {
             self.font_px = (self.config.font_pt * window.scale_factor() as f32).round();
         }
         let fonts = FontConfig { size_px: self.font_px, system_fonts: true, ..Default::default() };
-        let renderer = Renderer::new(device.clone(), queue, config.format, &fonts);
+        let mut renderer = Renderer::new(device.clone(), queue, config.format, &fonts);
+        set_font_family(&mut renderer, &self.config, self.font_px);
         self.gpu = Some(Gpu { surface, config, device, renderer, lost });
     }
 
@@ -292,7 +316,10 @@ impl App {
         let dims = Dimensions { cols: 80, rows: 24, pixel_width: 0, pixel_height: 0 };
         let (session, events) = Session::open(&self.profile, dims, id, wake).expect("start shell");
         let mut term = Terminal::new(dims.cols, dims.rows, self.config.scrollback);
-        term.set_theme(self.theme.as_deref().and_then(Theme::by_name).as_ref());
+        term.set_theme(self.themes.resolve(&self.config, &self.theme, self.dark_appearance).0.as_ref());
+        if let Some(seq) = self.config.cursor_sequence() {
+            term.write(seq.as_bytes());
+        }
         let pane = Pane {
             term,
             frame: Frame::default(),
@@ -561,14 +588,73 @@ impl App {
         self.request_redraw();
     }
 
-    fn set_theme(&mut self, name: Option<String>) {
-        let theme = name.as_deref().and_then(Theme::by_name);
+    /// Chooses a theme (`auto`, `default`, a name or a path) for every pane, and new ones.
+    fn set_theme(&mut self, name: String) {
+        self.theme = name;
+        self.apply_theme();
+        let mut text = format!("Theme: {}", themes::display(&self.themes, &self.theme));
+        if self.theme == "auto" {
+            let now = Themes::effective_name(&self.config, "auto", self.dark_appearance);
+            text.push_str(&format!(" · {}", themes::display(&self.themes, &now)));
+        }
+        self.show_notice(text);
+    }
+
+    /// Sets the resolved theme's colours in every pane.
+    fn apply_theme(&mut self) {
+        let (theme, opacity) = self.themes.resolve(&self.config, &self.theme, self.dark_appearance);
         for pane in self.panes.values_mut() {
             pane.term.set_theme(theme.as_ref());
         }
-        self.show_notice(format!("Theme: {}", name.as_deref().unwrap_or("default")));
-        self.theme = name;
+        self.opacity = opacity;
         self.force_redraw = true;
+        self.request_redraw();
+    }
+
+    /// Re-reads the config file and theme files if either changed since the last load (or
+    /// always, with `force`), and applies what changed without restarting.
+    fn reload_config(&mut self, force: bool) {
+        let stamp = config_stamp(self.config_path.as_deref());
+        if !force && stamp == self.config_stamp {
+            return;
+        }
+        self.config_stamp = stamp;
+        let (themes, mut warnings) = Themes::load(themes_dir(self.config_path.as_deref()).as_deref());
+        let (new, w) = config::load(self.config_path.as_deref(), &|n| themes.exists(n));
+        warnings.extend(w);
+        for w in &warnings {
+            eprintln!("glyphium: {w}");
+        }
+        let old = std::mem::replace(&mut self.config, new);
+        self.themes = themes;
+        if old.theme != self.config.theme {
+            self.theme = self.config.theme.clone();
+        }
+        if (old.font_pt, &old.font_family, old.line_height) != (self.config.font_pt, &self.config.font_family, self.config.line_height) {
+            let scale = self.window().scale_factor() as f32;
+            self.font_px = (self.config.font_pt * scale).round();
+            let gpu = self.gpu.as_mut().unwrap();
+            set_font_family(&mut gpu.renderer, &self.config, self.font_px);
+            self.layout_dirty = true;
+        }
+        if old.cursor_sequence() != self.config.cursor_sequence() {
+            let seq = self.config.cursor_sequence().unwrap_or_else(|| "\x1b[0 q".into());
+            for pane in self.panes.values_mut() {
+                pane.term.write(seq.as_bytes());
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if old.option_as_meta != self.config.option_as_meta {
+            use winit::platform::macos::WindowExtMacOS;
+            self.window().set_option_as_alt(option_as_alt(&self.config));
+        }
+        self.apply_theme();
+        self.layout_dirty = true;
+        match warnings.first() {
+            Some(w) => self.notice = Some((w.clone(), Instant::now() + NOTICE * 3)),
+            None => self.show_notice("Settings reloaded".into()),
+        }
+        self.request_redraw();
     }
 
     /// A key while the queue prompt is open. Everything goes to the prompt, never the shell.
@@ -823,12 +909,7 @@ impl App {
                     self.request_redraw();
                 }
             }
-            Action::Copy => {
-                let text = self.focused_pane().and_then(|p| p.term.selection_text());
-                if let (Some(text), Some(cb)) = (text, &mut self.clipboard) {
-                    let _ = cb.set_text(text);
-                }
-            }
+            Action::Copy => self.run_copy(),
             Action::Paste => {
                 let text = self.clipboard.as_mut().and_then(|c| c.get_text().ok());
                 if let Some(text) = text {
@@ -860,7 +941,7 @@ impl App {
                 self.request_redraw();
             }
             Action::NextTheme => {
-                let next = config::next_theme(self.theme.as_deref());
+                let next = config::next_theme(&self.theme, &self.themes.names());
                 self.set_theme(next);
             }
             Action::Quit => {
@@ -868,6 +949,13 @@ impl App {
                 self.tabs.clear();
                 event_loop.exit();
             }
+        }
+    }
+
+    fn run_copy(&mut self) {
+        let text = self.focused_pane().and_then(|p| p.term.selection_text());
+        if let (Some(text), Some(cb)) = (text, &mut self.clipboard) {
+            let _ = cb.set_text(text);
         }
     }
 
@@ -882,8 +970,9 @@ impl App {
     /// Multi-line text into a program without bracketed paste can run commands, so that case
     /// asks first: a second paste confirms, any other key cancels.
     fn paste(&mut self, text: String) {
+        let confirm = self.config.confirm_paste;
         let Some(pane) = self.focused_pane() else { return };
-        if pane.term.paste_needs_confirmation(&text) {
+        if confirm && pane.term.paste_needs_confirmation(&text) {
             let confirmed = self.banner.is_some() && self.pending_paste.as_deref() == Some(text.as_str());
             if !confirmed {
                 let lines = text.lines().count();
@@ -997,7 +1086,9 @@ impl App {
             }
             ElementState::Released => {
                 self.pressed &= !(1 << button);
-                self.drag = None;
+                if self.drag.take().is_some_and(|d| d.moved) && self.config.copy_on_select {
+                    self.run_copy();
+                }
                 if let Some((id, _)) = hit {
                     self.report_mouse(id, MouseAction::Release, Some(button));
                 }
@@ -1199,9 +1290,41 @@ impl App {
                     }
                 }
                 Step::Theme(name) => {
-                    let name = (name != "default").then_some(name);
-                    assert!(name.as_deref().is_none_or(|n| Theme::by_name(n).is_some()), "unknown theme {name:?}");
+                    assert!(matches!(name.as_str(), "auto" | "default") || self.themes.exists(&name), "unknown theme {name:?}");
                     self.set_theme(name);
+                }
+                Step::ReloadConfig => self.reload_config(false),
+                Step::WriteConfig(key, value) => {
+                    let path = self.config_path.clone().expect("write-config needs --config");
+                    config::write_key(&path, &key, &value).expect("write config");
+                    // File times can be coarse: make sure the change is seen as one.
+                    self.config_stamp = None;
+                }
+                Step::WriteTheme(name, text) => {
+                    let dir = themes_dir(self.config_path.as_deref()).expect("write-theme needs --config");
+                    std::fs::create_dir_all(&dir).expect("themes folder");
+                    std::fs::write(dir.join(name), text).expect("write theme");
+                    self.config_stamp = None;
+                }
+                Step::ExpectConfig(key, value) => {
+                    let text = self.config_path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+                    let line = text.lines().find(|l| l.split_once('=').is_some_and(|(k, _)| k.trim() == key)).unwrap_or("").to_string();
+                    let ok = line.split_once('=').is_some_and(|(_, v)| v.split(" #").next().unwrap_or("").trim().trim_matches('"') == value);
+                    self.report.get_or_insert_with(Default::default).check(&format!("config has {key} = {value}"), ok, &format!("line {line:?}"));
+                    if !ok {
+                        self.exit_code = 1;
+                    }
+                }
+                Step::Appearance(dark) => {
+                    self.dark_appearance = Some(dark);
+                    self.apply_theme();
+                }
+                Step::ExpectTheme(name) => {
+                    let got = Themes::effective_name(&self.config, &self.theme, self.dark_appearance);
+                    self.report.get_or_insert_with(Default::default).check(&format!("theme is {name:?}"), got == name, &format!("got {got:?}"));
+                    if got != name {
+                        self.exit_code = 1;
+                    }
                 }
                 Step::Quit => {
                     if let Some(r) = &self.report {
@@ -1231,6 +1354,46 @@ fn draw_list<'a>(panes: &'a HashMap<PaneId, Pane>, bar: Option<&'a Bar>, bar_hei
     list
 }
 
+/// The `themes/` folder next to the config file.
+fn themes_dir(config_path: Option<&Path>) -> Option<PathBuf> {
+    config_path.and_then(Path::parent).map(|d| d.join("themes"))
+}
+
+fn config_stamp(config_path: Option<&Path>) -> Option<SystemTime> {
+    let dir = themes_dir(config_path);
+    let paths: Vec<&Path> = config_path.into_iter().chain(dir.as_deref()).collect();
+    themes::newest_mtime(&paths)
+}
+
+#[cfg(target_os = "macos")]
+fn option_as_alt(config: &config::Config) -> winit::platform::macos::OptionAsAlt {
+    if config.option_as_meta { winit::platform::macos::OptionAsAlt::Both } else { winit::platform::macos::OptionAsAlt::None }
+}
+
+/// Where macOS keeps SF Mono: inside Terminal.app, not installed for other apps. Read from
+/// there at run time when asked for by name; never bundled.
+const SF_MONO_DIR: &str = "/System/Applications/Utilities/Terminal.app/Contents/Resources/Fonts";
+
+/// Applies the config's font family and line height, loading SF Mono from the system if
+/// that is the family asked for and it isn't installed.
+fn set_font_family(renderer: &mut Renderer, config: &config::Config, size_px: f32) {
+    let family = config.font_family.as_deref();
+    if renderer.set_font(family, config.line_height, size_px) {
+        return;
+    }
+    if family.is_some_and(|f| f.eq_ignore_ascii_case("SF Mono")) {
+        for face in ["Regular", "Bold", "RegularItalic", "BoldItalic"] {
+            if let Ok(data) = std::fs::read(format!("{SF_MONO_DIR}/SF-Mono-{face}.otf")) {
+                renderer.add_font(data);
+            }
+        }
+        if renderer.set_font(family, config.line_height, size_px) {
+            return;
+        }
+    }
+    eprintln!("glyphium: font family {:?} not found; using {}", family.unwrap_or(""), renderer.font_family());
+}
+
 fn open_link(uri: &str) {
     // Terminal output chose this string, so only ever hand on ordinary web and mail links.
     let scheme = uri.split(':').next().unwrap_or("").to_ascii_lowercase();
@@ -1247,11 +1410,22 @@ impl ApplicationHandler<()> for App {
         if self.window.is_some() {
             return;
         }
-        let attrs = Window::default_attributes().with_title("Glyphium").with_inner_size(LogicalSize::new(960.0, 620.0));
+        // A first guess from the font size; the grid fits whatever size the window gets.
+        let c = &self.config;
+        let size = LogicalSize::new(c.window_columns as f64 * c.font_pt as f64 * 0.6 + 2.0 * c.padding as f64, c.window_rows as f64 * c.font_pt as f64 * c.line_height as f64 + 2.0 * c.padding as f64);
+        #[allow(unused_mut)]
+        let mut attrs = Window::default_attributes().with_title("Glyphium").with_inner_size(size);
+        #[cfg(target_os = "macos")]
+        {
+            use winit::platform::macos::WindowAttributesExtMacOS;
+            attrs = attrs.with_option_as_alt(option_as_alt(&self.config));
+        }
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         window.set_ime_allowed(true);
+        self.dark_appearance = window.theme().map(|t| t == winit::window::Theme::Dark);
         self.window = Some(window);
         self.create_gpu();
+        self.apply_theme();
         self.new_tab();
         self.script_at = Instant::now();
         self.request_redraw();
@@ -1294,7 +1468,17 @@ impl ApplicationHandler<()> for App {
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.set_font((self.config.font_pt * scale_factor as f32).round());
             }
+            WindowEvent::ThemeChanged(theme) => {
+                self.dark_appearance = Some(theme == winit::window::Theme::Dark);
+                if self.theme == "auto" {
+                    self.apply_theme();
+                }
+            }
             WindowEvent::Focused(focused) => {
+                if focused {
+                    // Edits made in another app show up when the user comes back.
+                    self.reload_config(false);
+                }
                 self.focused_window = focused;
                 self.focus_changes += 1;
                 if let Some(pane) = self.focused_pane() {
@@ -1464,8 +1648,7 @@ fn main() {
     }
     let event_loop = EventLoop::<()>::with_user_event().build().expect("event loop");
     let proxy = event_loop.create_proxy();
-    let config = config::load(config::path(config_flag).as_deref());
-    let mut app = App::new(proxy, profile, config, script_steps);
+    let mut app = App::new(proxy, profile, config::path(config_flag), script_steps);
     event_loop.run_app(&mut app).expect("event loop");
     std::process::exit(app.exit_code);
 }

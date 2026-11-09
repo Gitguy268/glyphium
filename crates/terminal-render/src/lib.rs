@@ -11,7 +11,7 @@ mod glyphs;
 use glyphium_terminal_core::{Cell, CursorStyle, Frame, Rgb, attrs};
 use wgpu::util::DeviceExt as _;
 
-pub use glyphs::{CellMetrics, FontConfig};
+pub use glyphs::{CellMetrics, DEFAULT_FAMILY, DEFAULT_LINE_HEIGHT, FontConfig};
 use glyphs::{AtlasFull, COLOR_ATLAS_SIZE, Glyphs, MASK_ATLAS_SIZE, PlacedGlyph, STYLE_BOLD, STYLE_ITALIC};
 
 /// Non-sRGB, so sRGB colour values pass through unchanged on every platform.
@@ -258,6 +258,28 @@ impl Renderer {
     pub fn set_font_size(&mut self, size_px: f32) {
         self.glyphs.set_size(size_px);
         self.glyph_generation += 1;
+    }
+
+    /// Changes the terminal font family and line height at `size_px`. False if the family is
+    /// not loaded and the bundled one is used instead. Views rebuild as for a size change.
+    pub fn set_font(&mut self, family: Option<&str>, line_height: f32, size_px: f32) -> bool {
+        let found = self.glyphs.set_family(family, line_height, size_px);
+        self.glyph_generation += 1;
+        found
+    }
+
+    /// The family actually in use.
+    pub fn font_family(&self) -> &str {
+        self.glyphs.family()
+    }
+
+    /// Makes the families in a font file available to [`Renderer::set_font`].
+    pub fn add_font(&mut self, data: Vec<u8>) {
+        self.glyphs.add_font(data);
+    }
+
+    pub fn monospace_families(&self) -> Vec<String> {
+        self.glyphs.monospace_families()
     }
 
     pub fn device(&self) -> &wgpu::Device {

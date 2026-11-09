@@ -41,8 +41,20 @@ pub enum Step {
     OpenQueue,
     /// Input to the open queue prompt.
     Prompt(crate::PromptInput),
-    /// `default` or a theme name.
+    /// `auto`, `default` or a theme name.
     Theme(String),
+    /// Re-reads the config file and themes if they changed, as focusing the window does.
+    ReloadConfig,
+    /// Pretends the system appearance changed: true for dark.
+    Appearance(bool),
+    /// The theme in force, with `auto` resolved.
+    ExpectTheme(String),
+    /// Sets a key in the config file the app was started with, as an editor would.
+    WriteConfig(String, String),
+    /// Writes a theme file into the `themes/` folder next to the config file.
+    WriteTheme(String, String),
+    /// The config file has `key = value`.
+    ExpectConfig(String, String),
     Quit,
 }
 
@@ -105,6 +117,22 @@ pub fn parse(source: &str) -> Vec<Step> {
                 }),
                 "expect-queued" => Step::ExpectQueued(arg.parse().expect("expect-queued N")),
                 "theme" => Step::Theme(arg.into()),
+                "reload-config" => Step::ReloadConfig,
+                "appearance" => Step::Appearance(match arg {
+                    "dark" => true,
+                    "light" => false,
+                    _ => panic!("appearance light|dark"),
+                }),
+                "expect-theme" => Step::ExpectTheme(arg.into()),
+                "write-config" | "write-theme" | "expect-config" => {
+                    let (k, v) = arg.split_once(' ').unwrap_or_else(|| panic!("{cmd} NAME VALUE"));
+                    let (k, v) = (k.to_string(), unescape(v));
+                    match cmd {
+                        "write-config" => Step::WriteConfig(k, v),
+                        "write-theme" => Step::WriteTheme(k, v),
+                        _ => Step::ExpectConfig(k, v),
+                    }
+                }
                 "quit" => Step::Quit,
                 _ => panic!("unknown script step: {line}"),
             }

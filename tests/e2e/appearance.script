@@ -1,0 +1,18 @@
+# theme = auto follows the system appearance; a chosen theme does not.
+wait 800
+type PS1='$ '\r
+wait 200
+type printf '\033[31mred \033[32mgreen \033[34mblue\033[0m'; echo\r
+wait 300
+appearance light
+expect-theme glass-light
+screenshot auto-light.png
+appearance dark
+expect-theme glass-dark
+screenshot auto-dark.png
+theme solarized-light
+appearance dark
+expect-theme solarized-light
+theme auto
+expect-theme glass-dark
+quit
