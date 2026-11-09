@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The Ghostty commit ADR 0001 accepted; keep in step with the README's build steps.
+  GHOSTTY_COMMIT: cec8b92f1ecd176a20a56aa405021e7ae991b996
+  ZIG_VERSION: 0.17.0
+  CARGO_TERM_COLOR: always
+  PACKAGES: -p glyphium-terminal-core -p glyphium-terminal-render -p glyphium-session-host -p glyphium
+
+jobs:
+  test:
+    name: Test (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: libclang for bindgen
+        run: echo "LIBCLANG_PATH=$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib" >> "$GITHUB_ENV"
+
+      - name: Cache the Ghostty build
+        id: ghostty-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            .tools/ghostty/include
+            .tools/ghostty/zig-out
+          key: ghostty-${{ runner.os }}-${{ runner.arch }}-${{ env.GHOSTTY_COMMIT }}-zig${{ env.ZIG_VERSION }}
+
+      - uses: mlugg/setup-zig@v2.2.1
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build libghostty-vt
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        run: |
+          git init -q .tools/ghostty
+          git -C .tools/ghostty fetch -q --depth 1 https://github.com/ghostty-org/ghostty.git "$GHOSTTY_COMMIT"
+          git -C .tools/ghostty checkout -q FETCH_HEAD
+          (cd .tools/ghostty && zig build -Demit-lib-vt -Doptimize=ReleaseFast)
+
+      - name: Cache Cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Clippy
+        run: cargo clippy --release $PACKAGES --all-targets -- -D warnings
+
+      # GPU tests print SKIPPED when the runner has no adapter. The e2e window scripts need a
+      # desktop session and run locally (tests/e2e/run.sh).
+      - name: Tests
+        run: cargo test --release $PACKAGES

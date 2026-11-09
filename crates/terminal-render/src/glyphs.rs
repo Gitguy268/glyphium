@@ -72,7 +72,7 @@ impl Shelf {
     }
 
     fn fits_alone(&self, w: u32, h: u32) -> bool {
-        w + 1 <= self.size && h + 1 <= self.size
+        w < self.size && h < self.size
     }
 
     /// One pixel of padding keeps linear sampling from bleeding across glyphs.

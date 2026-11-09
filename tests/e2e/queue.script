@@ -1,0 +1,69 @@
+# Queued commands wait for the shell's prompt, one at a time.
+wait 800
+type PS1='$ '\r
+wait 200
+# Idle shell: a queued command runs at once.
+queue echo now-$((0+1))
+wait 500
+expect-screen now-1
+expect-queued 0
+# The prompt: Enter queues, Backspace on an empty line takes the last one back, a pasted
+# newline becomes a space, Esc closes without queueing.
+type sleep 2\r
+wait 100
+open-queue
+prompt-type echo wrong
+prompt-key Enter
+expect-queued 1
+open-queue
+prompt-key Backspace
+expect-queued 0
+prompt-paste echo pas\nted-$((5+5))
+screenshot queue-prompt.png
+prompt-key Enter
+expect-queued 1
+open-queue
+prompt-type echo nope
+prompt-key Escape
+expect-queued 1
+wait 2500
+expect-screen pas ted-10
+expect-not-screen nope
+expect-queued 0
+# Behind a running command: head waits for one line of input, and the queued echo after it
+# must neither run early nor be eaten by head.
+type clear\r
+wait 300
+type sleep 1\r
+wait 100
+queue head -n1
+queue echo second-$((1+1))
+expect-queued 2
+screenshot queue-bar.png
+wait 1500
+expect-queued 1
+expect-not-screen second-2
+type typed-line\r
+wait 800
+expect-screen typed-line
+expect-screen second-2
+expect-queued 0
+# A full-screen program holds the queue until it quits.
+type clear\r
+wait 300
+type less /etc/hosts\r
+wait 500
+queue echo after-$((2+1))
+wait 800
+expect-not-screen after-3
+type q
+wait 800
+expect-screen after-3
+# Builtins never leave the shell; they still run in order.
+queue cd /tmp
+queue pwd
+wait 1200
+expect-screen \n/tmp\n
+expect-queued 0
+screenshot queue-done.png
+quit

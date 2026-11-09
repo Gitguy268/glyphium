@@ -537,7 +537,7 @@ impl Renderer {
         drop(mapped);
         readback.unmap();
         if matches!(self.format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb) {
-            out.chunks_exact_mut(4).for_each(|px| px.swap(0, 2));
+            out.as_chunks_mut::<4>().0.iter_mut().for_each(|px| px.swap(0, 2));
         }
         out
     }

@@ -1,5 +1,7 @@
-# A quiet terminal does not draw: at most one draw per cursor blink.
-wait 1000
+# A quiet terminal with a steady cursor draws nothing at all.
+wait 800
+type printf '\033[2 q'\r
+wait 600
 report-idle 3000
-expect-idle
+expect-idle 0
 quit
