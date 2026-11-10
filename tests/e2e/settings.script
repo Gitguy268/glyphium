@@ -1,0 +1,49 @@
+# The Settings panel previews each change at once; Done writes only the changed keys to the
+# config file, and Esc puts everything back.
+wait 800
+type PS1='$ '\r
+wait 200
+type printf '\033[31mred \033[32mgreen \033[34mblue \033[35mmagenta\033[0m'; echo\r
+appearance dark
+wait 300
+open-settings
+# Theme: auto -> glass-dark -> glass-light, previewed live.
+settings-key Right
+settings-key Right
+expect-theme glass-light
+screenshot settings-panel.png
+# Esc reverts the theme and writes nothing.
+settings-key Escape
+expect-theme glass-dark
+# Again: theme Tokyo Night (two back from auto), bigger font, bar cursor, then Done.
+menu action:settings
+settings-key Left
+settings-key Left
+expect-theme tokyo-night
+settings-key Down
+settings-key Down
+settings-key Right
+settings-key Down
+settings-key Down
+settings-key Down
+settings-key Down
+settings-key Down
+settings-key Right
+settings-key Right
+screenshot settings-changed.png
+settings-key Enter
+expect-config theme tokyo-night
+expect-config font_size 14
+expect-config cursor_style bar
+type echo saved-$((5*5))\r
+wait 300
+expect-screen saved-25
+# The ◀ ▶ buttons work by mouse too.
+open-settings
+click-chrome settings-next 1
+expect-theme default
+click-chrome settings-done
+expect-config theme default
+wait 1600
+screenshot settings-after.png
+quit

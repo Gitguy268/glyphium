@@ -1,0 +1,53 @@
+# The title bar: + opens a tab, pills switch and close tabs, the Queue button opens and closes
+# the popover. Clicks go through the same mouse path as the pointer, past the OS event.
+wait 800
+type PS1='$ '\r
+wait 200
+appearance dark
+type printf '\033[31mred \033[32mgreen \033[34mblue \033[35mmagenta\033[0m'; echo\r
+wait 300
+screenshot chrome-one-tab.png
+click-chrome new-tab
+wait 600
+expect-tabs 2
+type PS1='$ '\r
+click-chrome new-tab
+wait 600
+expect-tabs 3
+click-chrome tab 1
+expect-screen magenta
+screenshot chrome-tabs.png
+click-chrome close 3
+wait 300
+expect-tabs 2
+# Queue button: opens the popover for the focused pane; typing goes to it.
+type sleep 2\r
+wait 100
+click-chrome queue
+expect-prompt open
+prompt-type echo one-$((1+0))
+prompt-key Enter
+click-chrome queue
+prompt-type echo two-$((1+1))
+prompt-key Enter
+click-chrome queue
+prompt-type echo thr
+expect-queued 2
+screenshot chrome-queue-popover.png
+# A click into the terminal closes it without queueing.
+click-chrome terminal
+expect-prompt closed
+expect-queued 2
+wait 3000
+expect-screen one-1
+expect-screen two-2
+expect-queued 0
+theme glass-light
+wait 300
+screenshot chrome-light-toast.png
+split-right
+wait 600
+theme dracula
+wait 1800
+screenshot chrome-split.png
+quit
