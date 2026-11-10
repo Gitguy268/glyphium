@@ -61,6 +61,9 @@ pub enum Step {
     /// (a click into the focused pane).
     ClickChrome(String),
     ExpectPrompt(bool),
+    OpenSettings,
+    /// Up, Down, Left, Right, Enter or Escape in the Settings panel.
+    SettingsKey(crate::SettingsInput),
     Quit,
 }
 
@@ -126,6 +129,16 @@ pub fn parse(source: &str) -> Vec<Step> {
                 "reload-config" => Step::ReloadConfig,
                 "menu" => Step::Menu(arg.into()),
                 "click-chrome" => Step::ClickChrome(arg.into()),
+                "open-settings" => Step::OpenSettings,
+                "settings-key" => Step::SettingsKey(match arg {
+                    "Up" => crate::SettingsInput::Up,
+                    "Down" => crate::SettingsInput::Down,
+                    "Left" => crate::SettingsInput::Left,
+                    "Right" => crate::SettingsInput::Right,
+                    "Enter" => crate::SettingsInput::Done,
+                    "Escape" => crate::SettingsInput::Cancel,
+                    _ => panic!("settings-key Up|Down|Left|Right|Enter|Escape"),
+                }),
                 "expect-prompt" => Step::ExpectPrompt(match arg {
                     "open" => true,
                     "closed" => false,

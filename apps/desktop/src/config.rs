@@ -128,8 +128,8 @@ pub const TEMPLATE: &str = r##"# Glyphium settings. Edit and switch back to the 
 # window_rows = 30
 
 # Cursor
-# cursor_style = block                # block, bar or underline
-# cursor_blink = true
+# cursor_style = default              # default, block, bar or underline
+# cursor_blink = default              # default, true or false
 
 # Behaviour
 # option_as_meta = false              # macOS: Option sends Esc+key instead of special characters
@@ -200,12 +200,24 @@ pub fn parse(text: &str, theme_exists: &dyn Fn(&str) -> bool) -> (Config, Vec<St
             }
             "theme_light" => (value != "auto" && theme_ok(value)).then(|| config.theme_light = value.to_string()).is_some(),
             "theme_dark" => (value != "auto" && theme_ok(value)).then(|| config.theme_dark = value.to_string()).is_some(),
+            "opacity" if value.is_empty() => {
+                config.opacity = None;
+                true
+            }
             "opacity" => value.parse::<f32>().ok().filter(|v| (0.3..=1.0).contains(v)).map(|v| config.opacity = Some(v)).is_some(),
             "blur" => parse_bool(value).map(|v| config.blur = v).is_some(),
             "padding" => value.parse::<f32>().ok().filter(|v| (0.0..=64.0).contains(v)).map(|v| config.padding = v).is_some(),
             "window_columns" => value.parse::<u16>().ok().filter(|v| (20..=500).contains(v)).map(|v| config.window_columns = v).is_some(),
             "window_rows" => value.parse::<u16>().ok().filter(|v| (5..=200).contains(v)).map(|v| config.window_rows = v).is_some(),
+            "cursor_style" if value == "default" => {
+                config.cursor_style = None;
+                true
+            }
             "cursor_style" => CursorShape::parse(value).map(|v| config.cursor_style = Some(v)).is_some(),
+            "cursor_blink" if value == "default" => {
+                config.cursor_blink = None;
+                true
+            }
             "cursor_blink" => parse_bool(value).map(|v| config.cursor_blink = Some(v)).is_some(),
             "option_as_meta" => parse_bool(value).map(|v| config.option_as_meta = v).is_some(),
             "copy_on_select" => parse_bool(value).map(|v| config.copy_on_select = v).is_some(),

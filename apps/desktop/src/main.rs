@@ -11,6 +11,7 @@ mod layout;
 mod menu;
 mod queue;
 mod script;
+mod settings;
 mod themes;
 
 use std::collections::HashMap;
@@ -57,6 +58,20 @@ struct Pane {
     scroll_accum: f32,
     /// Commands to type once the shell is back at its prompt.
     queue: CommandQueue,
+}
+
+/// What a key or click does in the Settings panel.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SettingsInput {
+    Up,
+    Down,
+    Left,
+    Right,
+    Select(usize),
+    /// Select a row and step it: the ◀ and ▶ buttons.
+    Step(usize, i32),
+    Done,
+    Cancel,
 }
 
 /// What a key press does in the queue prompt.
@@ -199,6 +214,7 @@ struct App {
     opacity: f32,
     #[cfg(target_os = "macos")]
     menu: Option<menu::AppMenu>,
+    settings: Option<settings::Settings>,
     /// The last action from the menu and from a key, so one press never runs twice.
     last_menu: Option<(Action, Instant)>,
     last_key: Option<(Action, Instant)>,
@@ -271,6 +287,7 @@ impl App {
             opacity: 1.0,
             #[cfg(target_os = "macos")]
             menu: None,
+            settings: None,
             last_menu: None,
             last_key: None,
             mods: ModifiersState::empty(),
@@ -581,8 +598,23 @@ impl App {
                 right.into_iter().chain(below)
             })
             .collect();
+        let settings = self.settings.as_ref().map(|st| chrome::SettingsInfo {
+            rows: settings::ROWS.iter().map(|r| (r.label().to_string(), st.value(*r, &|n| themes::display(&self.themes, n)))).collect(),
+            selected: st.row,
+            path: self.config_path.as_ref().map_or_else(|| "(no config file)".into(), |p| {
+                let home = std::env::var("HOME").unwrap_or_default();
+                let p = p.display().to_string();
+                match p.strip_prefix(&home) {
+                    Some(rest) if !home.is_empty() => format!("~{rest}"),
+                    _ => p,
+                }
+            }),
+        });
+        let window_height = window.inner_size().height as f32;
         let input = chrome::Input {
             width,
+            window_height,
+            settings,
             scale,
             traffic_lights: cfg!(target_os = "macos") && window.fullscreen().is_none(),
             title,
@@ -613,7 +645,7 @@ impl App {
     /// A press on the chrome. True if it was there and has been handled.
     fn chrome_click(&mut self, hit: chrome::Hit) {
         use chrome::Hit;
-        if hit != Hit::Popover && hit != Hit::Queue {
+        if !matches!(hit, Hit::Popover | Hit::Queue | Hit::Scrim) {
             self.prompt = None;
         }
         match hit {
@@ -637,7 +669,12 @@ impl App {
                     self.prompt = Some(Prompt { pane: id, text: String::new() });
                 }
             }
-            Hit::Popover => {}
+            Hit::Popover | Hit::Scrim => {}
+            Hit::SettingRow(i) => self.settings_input(SettingsInput::Select(i)),
+            Hit::SettingPrev(i) => self.settings_input(SettingsInput::Step(i, -1)),
+            Hit::SettingNext(i) => self.settings_input(SettingsInput::Step(i, 1)),
+            Hit::SettingsDone => self.settings_input(SettingsInput::Done),
+            Hit::SettingsCancel => self.settings_input(SettingsInput::Cancel),
             Hit::Empty => {
                 let now = Instant::now();
                 if self.last_bar_click.is_some_and(|t| now - t < DOUBLE_CLICK) {
@@ -739,15 +776,25 @@ impl App {
         for w in &warnings {
             eprintln!("glyphium: {w}");
         }
-        let old = std::mem::replace(&mut self.config, new);
         self.themes = themes;
-        if old.theme != self.config.theme {
-            self.theme = self.config.theme.clone();
+        if new.theme != self.config.theme {
+            self.theme = new.theme.clone();
         }
         #[cfg(target_os = "macos")]
         if let Some(m) = &mut self.menu {
             m.set_themes(&self.themes.list(), &self.theme);
         }
+        self.apply_config(new);
+        match warnings.first() {
+            Some(w) => self.notice = Some((w.clone(), Instant::now() + NOTICE * 3)),
+            None => self.show_notice("Settings reloaded".into()),
+        }
+    }
+
+    /// Makes `new` the config in force, changing only what differs: fonts, cursor, window
+    /// blur, padding, Option key, colours.
+    fn apply_config(&mut self, new: config::Config) {
+        let old = std::mem::replace(&mut self.config, new);
         if (old.font_pt, &old.font_family, old.line_height) != (self.config.font_pt, &self.config.font_family, self.config.line_height) {
             let scale = self.window().scale_factor() as f32;
             self.font_px = (self.config.font_pt * scale).round();
@@ -774,11 +821,98 @@ impl App {
         }
         self.apply_theme();
         self.layout_dirty = true;
-        match warnings.first() {
-            Some(w) => self.notice = Some((w.clone(), Instant::now() + NOTICE * 3)),
-            None => self.show_notice("Settings reloaded".into()),
-        }
         self.request_redraw();
+    }
+
+    fn open_settings(&mut self) {
+        self.prompt = None;
+        self.clear_banner();
+        let renderer = &self.gpu.as_ref().unwrap().renderer;
+        let mut fonts = renderer.monospace_families();
+        if cfg!(target_os = "macos") && Path::new(SF_MONO_DIR).exists() && !fonts.iter().any(|f| f == "SF Mono") {
+            fonts.push("SF Mono".into());
+            fonts.sort_by_key(|f| f.to_lowercase());
+        }
+        // Where opacity steps from when the config has none: the theme's suggestion.
+        let base = self.themes.resolve(&config::Config { opacity: None, ..self.config.clone() }, &self.theme, self.dark_appearance).1;
+        self.settings = Some(settings::Settings::new(&self.config, &self.theme, &self.themes.names(), fonts, base));
+        self.request_redraw();
+    }
+
+    /// A change in the Settings panel; previews at once.
+    fn settings_input(&mut self, input: SettingsInput) {
+        let Some(st) = &mut self.settings else { return };
+        match input {
+            SettingsInput::Up => st.move_row(-1),
+            SettingsInput::Down => st.move_row(1),
+            SettingsInput::Left => st.step(-1),
+            SettingsInput::Right => st.step(1),
+            SettingsInput::Select(i) => st.row = i.min(settings::ROWS.len() - 1),
+            SettingsInput::Step(i, dir) => {
+                st.row = i.min(settings::ROWS.len() - 1);
+                st.step(dir);
+            }
+            SettingsInput::Done => return self.close_settings(true),
+            SettingsInput::Cancel => return self.close_settings(false),
+        }
+        let (draft, theme) = (st.draft.clone(), st.theme.clone());
+        // The opacity row shows the new theme's suggestion when none is set.
+        st.base_opacity = self.themes.resolve(&config::Config { opacity: None, ..draft.clone() }, &theme, self.dark_appearance).1;
+        if theme != self.theme {
+            self.theme = theme;
+            #[cfg(target_os = "macos")]
+            if let Some(m) = &self.menu {
+                m.check_theme(&self.theme);
+            }
+        }
+        self.apply_config(draft);
+    }
+
+    /// Done saves the changed keys to the config file; Cancel puts everything back.
+    fn close_settings(&mut self, save: bool) {
+        let Some(st) = self.settings.take() else { return };
+        if !save {
+            self.theme = st.original_theme.clone();
+            #[cfg(target_os = "macos")]
+            if let Some(m) = &self.menu {
+                m.check_theme(&self.theme);
+            }
+            self.apply_config(st.original);
+            return;
+        }
+        let changes = st.changes();
+        if changes.is_empty() {
+            self.request_redraw();
+            return;
+        }
+        let Some(path) = self.config_path.clone() else {
+            self.show_notice("No config file to save to; changes last until you quit".into());
+            return;
+        };
+        for (key, value) in &changes {
+            if let Err(e) = config::write_key(&path, key, value) {
+                self.show_notice(format!("Could not save {}: {e}", path.display()));
+                return;
+            }
+        }
+        // The file now matches what is in force: no reload needed on the next focus.
+        self.config_stamp = config_stamp(Some(&path));
+        self.config.theme = self.theme.clone();
+        let n = changes.len();
+        self.show_notice(format!("Saved {n} setting{}", if n == 1 { "" } else { "s" }));
+    }
+
+    fn settings_key(&mut self, event: &winit::event::KeyEvent) {
+        let input = match &event.logical_key {
+            Key::Named(NamedKey::ArrowUp) => SettingsInput::Up,
+            Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::Tab) => SettingsInput::Down,
+            Key::Named(NamedKey::ArrowLeft) => SettingsInput::Left,
+            Key::Named(NamedKey::ArrowRight) | Key::Named(NamedKey::Space) => SettingsInput::Right,
+            Key::Named(NamedKey::Enter) => SettingsInput::Done,
+            Key::Named(NamedKey::Escape) => SettingsInput::Cancel,
+            _ => return,
+        };
+        self.settings_input(input);
     }
 
     /// A key while the queue prompt is open. Everything goes to the prompt, never the shell.
@@ -1008,6 +1142,7 @@ impl App {
             "Minus" => Action::ZoomOut,
             "Digit0" => Action::ZoomReset,
             "KeyQ" => Action::Quit,
+            "Comma" => Action::Settings,
             d if d.starts_with("Digit") => Action::SelectTab(d[5..].parse::<usize>().ok()?.checked_sub(1)?),
             _ => return None,
         })
@@ -1034,6 +1169,14 @@ impl App {
             return;
         }
         *(if from_menu { &mut self.last_menu } else { &mut self.last_key }) = Some((action, now));
+        if self.settings.is_some() {
+            match action {
+                Action::Settings => self.close_settings(true),
+                Action::Quit => self.run_action(action, event_loop),
+                _ => {}
+            }
+            return;
+        }
         if self.prompt.is_some() {
             match action {
                 Action::Paste => {
@@ -1131,8 +1274,8 @@ impl App {
                 let next = config::next_theme(&self.theme, &self.themes.names());
                 self.set_theme(next);
             }
-            // The Settings panel replaces this once it exists.
-            Action::Settings | Action::OpenConfig => self.open_config(),
+            Action::Settings => self.open_settings(),
+            Action::OpenConfig => self.open_config(),
             Action::OpenThemes => {
                 if let Some(dir) = themes_dir(self.config_path.as_deref()) {
                     let _ = std::fs::create_dir_all(&dir);
@@ -1308,7 +1451,7 @@ impl App {
 
     fn mouse_moved(&mut self, pos: PhysicalPosition<f64>) {
         self.mouse_px = (pos.x as f32, pos.y as f32);
-        let hover = self.chrome_hit(pos.x as f32, pos.y as f32).filter(|h| !matches!(h, chrome::Hit::Empty | chrome::Hit::Popover));
+        let hover = self.chrome_hit(pos.x as f32, pos.y as f32).filter(|h| !matches!(h, chrome::Hit::Empty | chrome::Hit::Popover | chrome::Hit::Scrim | chrome::Hit::SettingRow(_)));
         if hover != self.hover {
             self.hover = hover;
             self.request_redraw();
@@ -1554,7 +1697,11 @@ impl App {
                             self.hover = Some(Hit::Tab(i));
                             Hit::CloseTab(i)
                         }
+                        Some(("settings-next", n)) => Hit::SettingNext(n.parse::<usize>().expect("settings-next ROW") - 1),
+                        Some(("settings-prev", n)) => Hit::SettingPrev(n.parse::<usize>().expect("settings-prev ROW") - 1),
                         _ => match target.as_str() {
+                            "settings-done" => Hit::SettingsDone,
+                            "settings-cancel" => Hit::SettingsCancel,
                             "new-tab" => Hit::NewTab,
                             "queue" => Hit::Queue,
                             "terminal" => Hit::Popover, // placeholder, handled below
@@ -1573,6 +1720,8 @@ impl App {
                     self.mouse_button(ElementState::Pressed, 1);
                     self.mouse_button(ElementState::Released, 1);
                 }
+                Step::OpenSettings => self.run_action(Action::Settings, event_loop),
+                Step::SettingsKey(input) => self.settings_input(input),
                 Step::ExpectPrompt(open) => {
                     let got = self.prompt.is_some();
                     self.report.get_or_insert_with(Default::default).check(&format!("queue popover {}", if open { "open" } else { "closed" }), got == open, "");
@@ -1782,6 +1931,16 @@ impl ApplicationHandler<UserEvent> for App {
                     PhysicalKey::Code(c) => format!("{c:?}"),
                     PhysicalKey::Unidentified(_) => String::new(),
                 };
+                if self.settings.is_some() {
+                    if event.state == ElementState::Pressed {
+                        match self.shortcut(&code, self.mods) {
+                            Some(a @ (Action::Quit | Action::Settings)) => self.dispatch(a, false, event_loop),
+                            Some(_) => {}
+                            None => self.settings_key(&event),
+                        }
+                    }
+                    return;
+                }
                 if self.prompt.is_some() {
                     if event.state == ElementState::Pressed {
                         if self.shortcut(&code, self.mods) == Some(Action::Quit) {

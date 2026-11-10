@@ -24,6 +24,14 @@ pub enum Hit {
     Popover,
     /// Empty title bar: drags the window.
     Empty,
+    /// Settings panel: a row, its ◀ and ▶ buttons, Done and Cancel, and the dimmed window
+    /// around it, which takes clicks so nothing behind the panel gets them.
+    SettingRow(usize),
+    SettingPrev(usize),
+    SettingNext(usize),
+    SettingsDone,
+    SettingsCancel,
+    Scrim,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,9 +64,18 @@ pub struct PromptInfo {
     pub unsupported: bool,
 }
 
+pub struct SettingsInfo {
+    /// (label, value) per row.
+    pub rows: Vec<(String, String)>,
+    pub selected: usize,
+    /// Where Done saves, shown under the heading.
+    pub path: String,
+}
+
 pub struct Input {
-    /// Window width in pixels.
+    /// Window size in pixels.
     pub width: f32,
+    pub window_height: f32,
     pub scale: f32,
     /// Leave the traffic lights' space (macOS, not full screen).
     pub traffic_lights: bool,
@@ -80,6 +97,7 @@ pub struct Input {
     pub opacity: f32,
     /// Gaps between split panes, in pixels, to draw as hairlines.
     pub dividers: Vec<Area>,
+    pub settings: Option<SettingsInfo>,
 }
 
 pub struct Chrome {
@@ -258,7 +276,90 @@ pub fn layout(input: &Input, measure: &mut dyn FnMut(&str, f32, bool) -> f32) ->
     if let Some(p) = &input.prompt {
         popover(input, p, queue, &mut shapes, &mut hits, measure);
     }
+    if let Some(st) = &input.settings {
+        settings_panel(input, st, &mut shapes, &mut hits, measure);
+    }
     Chrome { shapes, hits }
+}
+
+/// The Settings sheet, centred over a dimmed window.
+fn settings_panel(input: &Input, st: &SettingsInfo, shapes: &mut Vec<Shape>, hits: &mut Vec<(Area, Hit)>, measure: &mut dyn FnMut(&str, f32, bool) -> f32) {
+    let s = input.scale;
+    let (bg, fg, accent) = (input.background, input.foreground, input.accent);
+    let ink = |a: f32| color(fg, a);
+    let ui = UI_PT * s;
+    let small = SMALL_PT * s;
+    let line = ui_line_height;
+    let height_px = (input.window_height).max(200.0 * s);
+    shapes.push(Shape::Rect { x: 0.0, y: 0.0, w: input.width, h: height_px, radius: 0.0, color: [0.0, 0.0, 0.0, 0.32] });
+    hits.push((Area { x: 0.0, y: 0.0, w: input.width, h: height_px }, Hit::Scrim));
+
+    let pad = 18.0 * s;
+    let row_h = 32.0 * s;
+    let w = (500.0 * s).min(input.width - 24.0 * s);
+    let head = line(ui * 1.25) + 2.0 * s + line(small) + 12.0 * s;
+    let foot = 12.0 * s + 28.0 * s;
+    let h = pad + head + st.rows.len() as f32 * row_h + foot + pad;
+    let x = (input.width - w) / 2.0;
+    let y = ((height_px - h) / 2.0).max(8.0 * s);
+    let panel = mix(bg, fg, 0.06);
+    shapes.push(Shape::Rect { x: x - 2.0 * s, y: y + 6.0 * s, w: w + 4.0 * s, h, radius: 16.0 * s, color: [0.0, 0.0, 0.0, 0.25] });
+    shapes.push(Shape::Rect { x, y, w, h, radius: 16.0 * s, color: color(panel, 1.0) });
+    shapes.push(Shape::Ring { x, y, w, h, radius: 16.0 * s, width: s.max(1.0), color: ink(0.14) });
+
+    let mut cy = y + pad;
+    shapes.push(Shape::Text { x: x + pad, y: cy, text: "Settings".into(), size_px: ui * 1.25, bold: true, ui: true, color: ink(0.95) });
+    let keys = "↑↓ choose   ←→ change";
+    let kw = measure(keys, small, false);
+    shapes.push(Shape::Text { x: x + w - pad - kw, y: cy + (line(ui * 1.25) - line(small)) / 2.0, text: keys.into(), size_px: small, bold: false, ui: true, color: ink(0.4) });
+    cy += line(ui * 1.25) + 2.0 * s;
+    let path = fit(&format!("Saved to {}", st.path), w - 2.0 * pad, small, false, measure);
+    shapes.push(Shape::Text { x: x + pad, y: cy, text: path, size_px: small, bold: false, ui: true, color: ink(0.45) });
+    cy += line(small) + 12.0 * s;
+
+    let btn = 24.0 * s;
+    let value_w = 190.0 * s;
+    for (i, (label, value)) in st.rows.iter().enumerate() {
+        let rx = x + pad - 8.0 * s;
+        let rw = w - 2.0 * pad + 16.0 * s;
+        let selected = i == st.selected;
+        if selected {
+            shapes.push(Shape::Rect { x: rx, y: cy, w: rw, h: row_h, radius: 8.0 * s, color: color(accent, 0.16) });
+            shapes.push(Shape::Ring { x: rx, y: cy, w: rw, h: row_h, radius: 8.0 * s, width: 1.5 * s, color: color(accent, 0.7) });
+        }
+        hits.push((Area { x: rx, y: cy, w: rw, h: row_h }, Hit::SettingRow(i)));
+        let ty = cy + (row_h - line(ui)) / 2.0;
+        shapes.push(Shape::Text { x: x + pad, y: ty, text: label.clone(), size_px: ui, bold: false, ui: true, color: ink(0.85) });
+        // ◀ value ▶ at the right.
+        let next = Area { x: x + w - pad - btn, y: cy + (row_h - btn) / 2.0, w: btn, h: btn };
+        let prev = Area { x: next.x - value_w - btn, ..next };
+        for (area, glyph, hit) in [(prev, "‹", Hit::SettingPrev(i)), (next, "›", Hit::SettingNext(i))] {
+            let hover = input.hover == Some(hit);
+            shapes.push(Shape::Rect { x: area.x, y: area.y, w: area.w, h: area.h, radius: 6.0 * s, color: ink(if hover { 0.18 } else { 0.08 }) });
+            let gw = measure(glyph, ui * 1.3, true);
+            shapes.push(Shape::Text { x: area.x + (area.w - gw) / 2.0, y: area.y + (area.h - line(ui * 1.3)) / 2.0, text: glyph.into(), size_px: ui * 1.3, bold: true, ui: true, color: ink(0.8) });
+            hits.push((area, hit));
+        }
+        let value = fit(value, value_w - 12.0 * s, ui, selected, measure);
+        let vw = measure(&value, ui, selected);
+        shapes.push(Shape::Text { x: prev.x + btn + (value_w - vw) / 2.0, y: ty, text: value, size_px: ui, bold: selected, ui: true, color: ink(0.95) });
+        cy += row_h;
+    }
+
+    cy += 12.0 * s;
+    let bh = 28.0 * s;
+    let done_w = measure("Done", ui, true) + 28.0 * s;
+    let cancel_w = measure("Cancel", ui, false) + 28.0 * s;
+    let done = Area { x: x + w - pad - done_w, y: cy, w: done_w, h: bh };
+    let cancel = Area { x: done.x - 8.0 * s - cancel_w, y: cy, w: cancel_w, h: bh };
+    shapes.push(Shape::Rect { x: cancel.x, y: cancel.y, w: cancel.w, h: bh, radius: 7.0 * s, color: ink(if input.hover == Some(Hit::SettingsCancel) { 0.16 } else { 0.09 }) });
+    shapes.push(Shape::Text { x: cancel.x + 14.0 * s, y: cy + (bh - line(ui)) / 2.0, text: "Cancel".into(), size_px: ui, bold: false, ui: true, color: ink(0.85) });
+    shapes.push(Shape::Rect { x: done.x, y: done.y, w: done.w, h: bh, radius: 7.0 * s, color: color(accent, if input.hover == Some(Hit::SettingsDone) { 0.85 } else { 1.0 }) });
+    shapes.push(Shape::Text { x: done.x + 14.0 * s, y: cy + (bh - line(ui)) / 2.0, text: "Done".into(), size_px: ui, bold: true, ui: true, color: color(on_accent(accent), 1.0) });
+    hits.push((cancel, Hit::SettingsCancel));
+    hits.push((done, Hit::SettingsDone));
+    let hint = "esc cancels   ↩ saves";
+    shapes.push(Shape::Text { x: x + pad, y: cy + (bh - line(small)) / 2.0, text: hint.into(), size_px: small, bold: false, ui: true, color: ink(0.4) });
 }
 
 /// Black or white, whichever reads better on the accent colour.
@@ -364,6 +465,7 @@ mod tests {
     fn input(tabs: usize) -> Input {
         Input {
             width: 1600.0,
+            window_height: 1000.0,
             scale: 2.0,
             traffic_lights: true,
             title: "bash".into(),
@@ -379,6 +481,7 @@ mod tests {
             accent: Rgb { r: 80, g: 140, b: 255 },
             opacity: 0.8,
             dividers: vec![],
+            settings: None,
         }
     }
 
@@ -447,6 +550,25 @@ mod tests {
                 assert!(*x >= 0.0 && x + measure(text, *size_px, false) <= 300.0 + 1.0, "{text:?} at {x} overflows");
             }
         }
+    }
+
+    #[test]
+    fn settings_panel_rows_and_buttons() {
+        let mut i = input(1);
+        i.settings = Some(SettingsInfo { rows: (0..11).map(|n| (format!("row {n}"), format!("value {n}"))).collect(), selected: 2, path: "~/.config/glyphium/config.toml".into() });
+        let c = layout(&i, &mut measure);
+        for n in 0..11 {
+            let next = c.area(Hit::SettingNext(n)).unwrap();
+            let prev = c.area(Hit::SettingPrev(n)).unwrap();
+            assert_eq!(c.hit(next.center().0, next.center().1), Some(Hit::SettingNext(n)));
+            assert_eq!(c.hit(prev.center().0, prev.center().1), Some(Hit::SettingPrev(n)));
+            assert!(prev.x < next.x);
+        }
+        let done = c.area(Hit::SettingsDone).unwrap();
+        assert_eq!(c.hit(done.center().0, done.center().1), Some(Hit::SettingsDone));
+        assert!(done.y + done.h < 1000.0, "the panel fits the window");
+        let q = c.area(Hit::Queue).unwrap();
+        assert_eq!(c.hit(q.center().0, q.center().1), Some(Hit::Scrim), "the bar is behind the panel");
     }
 
     #[test]
