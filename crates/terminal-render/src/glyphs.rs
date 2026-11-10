@@ -118,7 +118,7 @@ pub struct Glyphs {
     metrics: CellMetrics,
     clusters: HashMap<(String, u8), Vec<PlacedGlyph>>,
     /// Lines of UI text by (text, size in 1/64 px, bold, ui face): glyphs and width.
-    lines: HashMap<(String, u32, bool, bool), (Vec<PlacedGlyph>, f32)>,
+    lines: HashMap<LineKey, (Vec<PlacedGlyph>, f32)>,
     /// Proportional face for window chrome; the terminal family when none is found.
     ui_family: String,
     mask_shelf: Shelf,
@@ -128,6 +128,9 @@ pub struct Glyphs {
     /// evicting for ever. Cleared by the renderer at the start of each update.
     pub draw_what_fits: bool,
 }
+
+/// Text, size in 1/64 px, bold, interface face.
+type LineKey = (String, u32, bool, bool);
 
 pub const STYLE_BOLD: u8 = 1;
 pub const STYLE_ITALIC: u8 = 2;
