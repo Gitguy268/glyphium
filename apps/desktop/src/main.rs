@@ -6,6 +6,8 @@
 
 mod config;
 mod layout;
+#[cfg(target_os = "macos")]
+mod menu;
 mod queue;
 mod script;
 mod themes;
@@ -122,11 +124,48 @@ enum Action {
     QueueCommand,
     ClearQueue,
     NextTheme,
+    Settings,
+    OpenConfig,
+    OpenThemes,
+    ReloadConfig,
     Quit,
 }
 
+/// Wakes the event loop: shell output or GPU loss, or a menu item chosen.
+#[derive(Debug)]
+pub enum UserEvent {
+    Wake,
+    Menu(String),
+}
+
+/// Menu item ids (`action:ID`) and what they do. Scripts send the same ids.
+const MENU_ACTIONS: &[(&str, Action)] = &[
+    ("settings", Action::Settings),
+    ("open-config", Action::OpenConfig),
+    ("open-themes", Action::OpenThemes),
+    ("reload-config", Action::ReloadConfig),
+    ("quit", Action::Quit),
+    ("new-tab", Action::NewTab),
+    ("split-right", Action::SplitRight),
+    ("split-down", Action::SplitDown),
+    ("queue", Action::QueueCommand),
+    ("clear-queue", Action::ClearQueue),
+    ("close", Action::ClosePane),
+    ("copy", Action::Copy),
+    ("paste", Action::Paste),
+    ("next-theme", Action::NextTheme),
+    ("zoom-in", Action::ZoomIn),
+    ("zoom-out", Action::ZoomOut),
+    ("zoom-reset", Action::ZoomReset),
+    ("prev-tab", Action::PrevTab),
+    ("next-tab", Action::NextTab),
+];
+
+/// A menu shortcut and the same key reaching the window within this time are one press.
+const SAME_PRESS: Duration = Duration::from_millis(150);
+
 struct App {
-    proxy: EventLoopProxy<()>,
+    proxy: EventLoopProxy<UserEvent>,
     wake_pending: Arc<AtomicBool>,
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
@@ -156,6 +195,11 @@ struct App {
     dark_appearance: Option<bool>,
     /// Window background opacity from the theme or config.
     opacity: f32,
+    #[cfg(target_os = "macos")]
+    menu: Option<menu::AppMenu>,
+    /// The last action from the menu and from a key, so one press never runs twice.
+    last_menu: Option<(Action, Instant)>,
+    last_key: Option<(Action, Instant)>,
     mods: ModifiersState,
     focused_window: bool,
     /// Window focus changes so far; each one redraws, which idle checks allow for.
@@ -184,7 +228,7 @@ fn pixel_rect(r: Rect) -> PaneRect {
 }
 
 impl App {
-    fn new(proxy: EventLoopProxy<()>, profile: Profile, config_path: Option<PathBuf>, script: Vec<Step>) -> Self {
+    fn new(proxy: EventLoopProxy<UserEvent>, profile: Profile, config_path: Option<PathBuf>, script: Vec<Step>) -> Self {
         let queue_supported = profile.command.as_deref().is_none_or(queue::is_shell);
         let (themes, mut warnings) = Themes::load(themes_dir(config_path.as_deref()).as_deref());
         let (config, w) = config::load(config_path.as_deref(), &|n| themes.exists(n));
@@ -218,6 +262,10 @@ impl App {
             themes,
             dark_appearance: None,
             opacity: 1.0,
+            #[cfg(target_os = "macos")]
+            menu: None,
+            last_menu: None,
+            last_key: None,
             mods: ModifiersState::empty(),
             focused_window: true,
             focus_changes: 0,
@@ -267,7 +315,7 @@ impl App {
             let proxy = self.proxy.clone();
             device.set_device_lost_callback(move |_, _| {
                 lost.store(true, Ordering::SeqCst);
-                let _ = proxy.send_event(());
+                let _ = proxy.send_event(UserEvent::Wake);
             });
         }
         let size = window.inner_size();
@@ -309,7 +357,7 @@ impl App {
         let (proxy, pending) = (self.proxy.clone(), self.wake_pending.clone());
         let wake = move || {
             if !pending.swap(true, Ordering::SeqCst) {
-                let _ = proxy.send_event(());
+                let _ = proxy.send_event(UserEvent::Wake);
             }
         };
         // The real size comes from the next layout pass, before any shell output is drawn.
@@ -465,7 +513,7 @@ impl App {
         changed |= self.poll_queues();
         if more {
             self.wake_pending.store(true, Ordering::SeqCst);
-            let _ = self.proxy.send_event(());
+            let _ = self.proxy.send_event(UserEvent::Wake);
         }
         changed
     }
@@ -591,6 +639,10 @@ impl App {
     /// Chooses a theme (`auto`, `default`, a name or a path) for every pane, and new ones.
     fn set_theme(&mut self, name: String) {
         self.theme = name;
+        #[cfg(target_os = "macos")]
+        if let Some(m) = &self.menu {
+            m.check_theme(&self.theme);
+        }
         self.apply_theme();
         let mut text = format!("Theme: {}", themes::display(&self.themes, &self.theme));
         if self.theme == "auto" {
@@ -629,6 +681,10 @@ impl App {
         self.themes = themes;
         if old.theme != self.config.theme {
             self.theme = self.config.theme.clone();
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(m) = &mut self.menu {
+            m.set_themes(&self.themes.list(), &self.theme);
         }
         if (old.font_pt, &old.font_family, old.line_height) != (self.config.font_pt, &self.config.font_family, self.config.line_height) {
             let scale = self.window().scale_factor() as f32;
@@ -880,6 +936,60 @@ impl App {
         })
     }
 
+    /// A menu item by id: `action:ID` (see [`MENU_ACTIONS`]) or `theme:NAME`.
+    fn menu_command(&mut self, id: &str, event_loop: &ActiveEventLoop) {
+        if let Some(name) = id.strip_prefix("theme:") {
+            self.set_theme(name.to_string());
+        } else if let Some(&(_, action)) = id.strip_prefix("action:").and_then(|a| MENU_ACTIONS.iter().find(|(n, _)| *n == a)) {
+            self.dispatch(action, true, event_loop);
+        } else {
+            eprintln!("glyphium: unknown menu item {id:?}");
+        }
+    }
+
+    /// Runs an action from the menu or a key. If the other path ran the same action a moment
+    /// ago, this is the same press arriving twice and is dropped. With the queue prompt open,
+    /// only actions that make sense there reach it.
+    fn dispatch(&mut self, action: Action, from_menu: bool, event_loop: &ActiveEventLoop) {
+        let now = Instant::now();
+        let other = if from_menu { self.last_key } else { self.last_menu };
+        if other.is_some_and(|(a, t)| a == action && now.duration_since(t) < SAME_PRESS) {
+            return;
+        }
+        *(if from_menu { &mut self.last_menu } else { &mut self.last_key }) = Some((action, now));
+        if self.prompt.is_some() {
+            match action {
+                Action::Paste => {
+                    if let Some(text) = self.clipboard.as_mut().and_then(|c| c.get_text().ok()) {
+                        self.prompt_input(PromptInput::Paste(text));
+                    }
+                }
+                Action::ClearQueue => self.prompt_input(PromptInput::ClearQueue),
+                Action::Quit => self.run_action(action, event_loop),
+                _ => {}
+            }
+            return;
+        }
+        if action != Action::Paste {
+            self.clear_banner();
+        }
+        self.run_action(action, event_loop);
+    }
+
+    /// Creates the config file from the template if needed, then opens it in the text editor.
+    fn open_config(&mut self) {
+        let Some(path) = self.config_path.clone() else { return };
+        if !path.exists() {
+            let made = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&path, config::TEMPLATE));
+            if let Err(e) = made {
+                self.show_notice(format!("Could not create {}: {e}", path.display()));
+                return;
+            }
+        }
+        open_path(&path, true);
+        self.show_notice("Editing settings: save, then come back to this window".into());
+    }
+
     fn run_action(&mut self, action: Action, event_loop: &ActiveEventLoop) {
         match action {
             Action::NewTab => self.new_tab(),
@@ -944,6 +1054,15 @@ impl App {
                 let next = config::next_theme(&self.theme, &self.themes.names());
                 self.set_theme(next);
             }
+            // The Settings panel replaces this once it exists.
+            Action::Settings | Action::OpenConfig => self.open_config(),
+            Action::OpenThemes => {
+                if let Some(dir) = themes_dir(self.config_path.as_deref()) {
+                    let _ = std::fs::create_dir_all(&dir);
+                    open_path(&dir, false);
+                }
+            }
+            Action::ReloadConfig => self.reload_config(true),
             Action::Quit => {
                 self.panes.clear();
                 self.tabs.clear();
@@ -1326,6 +1445,7 @@ impl App {
                         self.exit_code = 1;
                     }
                 }
+                Step::Menu(id) => self.menu_command(&id, event_loop),
                 Step::Quit => {
                     if let Some(r) = &self.report {
                         r.print();
@@ -1394,6 +1514,22 @@ fn set_font_family(renderer: &mut Renderer, config: &config::Config, size_px: f3
     eprintln!("glyphium: font family {:?} not found; using {}", family.unwrap_or(""), renderer.font_family());
 }
 
+/// Opens a file in the text editor (`text`) or a folder in the file manager.
+fn open_path(path: &Path, text: bool) {
+    let mut cmd = if cfg!(target_os = "macos") {
+        let mut c = std::process::Command::new("open");
+        if text {
+            c.arg("-t");
+        }
+        c
+    } else if cfg!(windows) {
+        std::process::Command::new("explorer")
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    let _ = cmd.arg(path).spawn();
+}
+
 fn open_link(uri: &str) {
     // Terminal output chose this string, so only ever hand on ordinary web and mail links.
     let scheme = uri.split(':').next().unwrap_or("").to_ascii_lowercase();
@@ -1405,7 +1541,7 @@ fn open_link(uri: &str) {
     let _ = std::process::Command::new(program).arg(uri).spawn();
 }
 
-impl ApplicationHandler<()> for App {
+impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -1426,12 +1562,21 @@ impl ApplicationHandler<()> for App {
         self.window = Some(window);
         self.create_gpu();
         self.apply_theme();
+        // Installed after launch, so it replaces nothing winit sets up later.
+        #[cfg(target_os = "macos")]
+        {
+            self.menu = Some(menu::AppMenu::new(&self.themes.list(), &self.theme));
+        }
         self.new_tab();
         self.script_at = Instant::now();
         self.request_redraw();
     }
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, _: ()) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+        if let UserEvent::Menu(id) = event {
+            self.menu_command(&id, event_loop);
+            return;
+        }
         self.wake_pending.store(false, Ordering::SeqCst);
         if self.gpu.as_ref().is_some_and(|g| g.lost.load(Ordering::SeqCst)) {
             self.request_redraw();
@@ -1511,7 +1656,7 @@ impl ApplicationHandler<()> for App {
                         self.clear_banner();
                     }
                     if let Some(action) = self.shortcut(&code, self.mods) {
-                        self.run_action(action, event_loop);
+                        self.dispatch(action, false, event_loop);
                         return;
                     }
                 }
@@ -1646,8 +1791,21 @@ fn main() {
     if profile.cwd.is_none() {
         profile.cwd = std::env::var_os("HOME").map(Into::into);
     }
-    let event_loop = EventLoop::<()>::with_user_event().build().expect("event loop");
+    let mut builder = EventLoop::<UserEvent>::with_user_event();
+    #[cfg(target_os = "macos")]
+    {
+        use winit::platform::macos::EventLoopBuilderExtMacOS;
+        builder.with_default_menu(false);
+    }
+    let event_loop = builder.build().expect("event loop");
     let proxy = event_loop.create_proxy();
+    #[cfg(target_os = "macos")]
+    {
+        let proxy = proxy.clone();
+        muda::MenuEvent::set_event_handler(Some(move |e: muda::MenuEvent| {
+            let _ = proxy.send_event(UserEvent::Menu(e.id.0.clone()));
+        }));
+    }
     let mut app = App::new(proxy, profile, config::path(config_flag), script_steps);
     event_loop.run_app(&mut app).expect("event loop");
     std::process::exit(app.exit_code);

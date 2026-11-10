@@ -55,6 +55,8 @@ pub enum Step {
     WriteTheme(String, String),
     /// The config file has `key = value`.
     ExpectConfig(String, String),
+    /// A menu item id, as choosing it in the menu bar sends.
+    Menu(String),
     Quit,
 }
 
@@ -118,6 +120,7 @@ pub fn parse(source: &str) -> Vec<Step> {
                 "expect-queued" => Step::ExpectQueued(arg.parse().expect("expect-queued N")),
                 "theme" => Step::Theme(arg.into()),
                 "reload-config" => Step::ReloadConfig,
+                "menu" => Step::Menu(arg.into()),
                 "appearance" => Step::Appearance(match arg {
                     "dark" => true,
                     "light" => false,
