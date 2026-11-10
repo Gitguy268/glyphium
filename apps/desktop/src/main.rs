@@ -4,6 +4,7 @@
 //! batches, and the screen is drawn at most once per display refresh and only if something
 //! changed. Panes in hidden tabs keep parsing but draw nothing.
 
+mod chrome;
 mod config;
 mod layout;
 #[cfg(target_os = "macos")]
@@ -39,7 +40,6 @@ use winit::window::{Window, WindowId};
 const DRAIN_BUDGET: usize = 2 * 1024 * 1024;
 const BLINK: Duration = Duration::from_millis(530);
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
-const SEPARATOR: Rgb = Rgb { r: 70, g: 70, b: 70 };
 /// How long a short notice, such as the theme name, stays in the top bar.
 const NOTICE: Duration = Duration::from_millis(1500);
 
@@ -81,14 +81,6 @@ struct Tab {
     focused: PaneId,
 }
 
-/// A one-row terminal used as the top bar: tab list or a question for the user.
-struct Bar {
-    term: Terminal,
-    frame: Frame,
-    view: PaneView,
-    text: String,
-    cols: u16,
-}
 
 struct Gpu {
     surface: wgpu::Surface<'static>,
@@ -174,13 +166,23 @@ struct App {
     tabs: Vec<Tab>,
     active: usize,
     next_id: u64,
-    bar: Option<Bar>,
+    /// Window chrome drawn over the panes: title bar, tabs, queue popover, toasts.
+    overlay: Option<PaneView>,
+    /// Click targets of the chrome as last drawn.
+    chrome: chrome::Chrome,
+    hover: Option<chrome::Hit>,
+    /// The last press on empty title bar, for double-click to zoom.
+    last_bar_click: Option<Instant>,
+    /// Padding around each pane's text, in pixels.
+    pad_px: u32,
+    /// The surface can show the desktop through it.
+    translucent: bool,
     banner: Option<String>,
     pending_paste: Option<String>,
     prompt: Option<Prompt>,
     notice: Option<(String, Instant)>,
-    /// Whether the panes were laid out below a top bar.
-    bar_shown: bool,
+    /// Height of the title bar the panes were laid out below, in pixels.
+    bar_px: u32,
     /// The session program is a shell whose prompt the queue can detect.
     queue_supported: bool,
     next_queue_poll: Instant,
@@ -247,11 +249,16 @@ impl App {
             tabs: vec![],
             active: 0,
             next_id: 1,
-            bar: None,
+            overlay: None,
+            chrome: chrome::Chrome { shapes: vec![], hits: vec![] },
+            hover: None,
+            last_bar_click: None,
+            pad_px: 0,
+            translucent: false,
             banner: None,
             pending_paste: None,
             prompt: None,
-            bar_shown: false,
+            bar_px: 0,
             queue_supported,
             next_queue_poll: Instant::now(),
             theme: config.theme.clone(),
@@ -323,6 +330,13 @@ impl App {
         // Non-sRGB, so colour values reach the screen as the terminal gave them, as on the web.
         let caps = surface.get_capabilities(&adapter);
         config.format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(config.format.remove_srgb_suffix());
+        // The shader writes premultiplied colour; either non-opaque mode lets the desktop show
+        // through (Metal lists PostMultiplied and treats the layer as premultiplied).
+        let see_through = [wgpu::CompositeAlphaMode::PreMultiplied, wgpu::CompositeAlphaMode::PostMultiplied].into_iter().find(|m| caps.alpha_modes.contains(m));
+        self.translucent = cfg!(target_os = "macos") && see_through.is_some();
+        if self.translucent {
+            config.alpha_mode = see_through.unwrap();
+        }
         surface.configure(&device, &config);
         if self.font_px == 0.0 {
             self.font_px = (self.config.font_pt * window.scale_factor() as f32).round();
@@ -341,10 +355,9 @@ impl App {
         let renderer = &self.gpu.as_ref().unwrap().renderer;
         for pane in self.panes.values_mut() {
             pane.view = renderer.new_view();
+            pane.view.set_inset(self.pad_px as f32, self.pad_px as f32);
         }
-        if let Some(bar) = &mut self.bar {
-            bar.view = renderer.new_view();
-        }
+        self.overlay = Some(renderer.new_overlay());
         self.force_redraw = true;
         self.layout_dirty = true;
         self.request_redraw();
@@ -444,26 +457,38 @@ impl App {
         self.panes.get_mut(&id)
     }
 
-    /// The window area left for panes, below the top bar when one shows.
+    /// The window area left for panes, below the title bar.
     fn content_area(&self) -> Rect {
         let size = self.window().inner_size();
-        let bar = if self.bar_content().is_some() { self.gpu.as_ref().unwrap().renderer.metrics().height } else { 0 };
+        let bar = self.bar_height();
         Rect { x: 0, y: bar, w: size.width, h: size.height.saturating_sub(bar) }
+    }
+
+    fn bar_height(&self) -> u32 {
+        chrome::height(self.tabs.len(), self.window().scale_factor() as f32)
+    }
+
+    /// Window background opacity in force: 1 when the surface can't be see-through.
+    fn effective_opacity(&self) -> f32 {
+        if self.translucent { self.opacity } else { 1.0 }
     }
 
     /// Applies the current window and split sizes to terminals and PTYs. Runs once per redraw,
     /// so a storm of resize events becomes one resize with the final size.
     fn apply_layout(&mut self) {
         self.layout_dirty = false;
-        self.bar_shown = self.bar_content().is_some();
+        self.bar_px = self.bar_height();
+        self.pad_px = (self.config.padding * self.window().scale_factor() as f32).round() as u32;
+        let pad = self.pad_px;
         let area = self.content_area();
         let m = self.gpu.as_ref().unwrap().renderer.metrics();
         for tab in &self.tabs {
             for (id, rect) in tab.root.rects(area) {
                 let Some(pane) = self.panes.get_mut(&id) else { continue };
                 pane.rect = rect;
-                let cols = (rect.w / m.width).clamp(1, u16::MAX as u32) as u16;
-                let rows = (rect.h / m.height).clamp(1, u16::MAX as u32) as u16;
+                pane.view.set_inset(pad as f32, pad as f32);
+                let cols = (rect.w.saturating_sub(2 * pad) / m.width).clamp(1, u16::MAX as u32) as u16;
+                let rows = (rect.h.saturating_sub(2 * pad) / m.height).clamp(1, u16::MAX as u32) as u16;
                 if (cols, rows) != (pane.cols, pane.rows) {
                     pane.cols = cols;
                     pane.rows = rows;
@@ -518,78 +543,115 @@ impl App {
         changed
     }
 
-    /// What the top bar should show, in escape-coded text, or `None` for no bar. The paste
-    /// question wins, then the queue prompt, then a notice, then tabs and the queue.
-    fn bar_content(&self) -> Option<String> {
-        if let Some(b) = &self.banner {
-            return Some(format!("\x1b[43;30m\x1b[K {b}\x1b[0m"));
+    /// Lays out the window chrome for the current state; keeps its click targets.
+    fn build_chrome(&mut self) -> Vec<glyphium_terminal_render::Shape> {
+        let window = self.window().clone();
+        let scale = window.scale_factor() as f32;
+        let width = window.inner_size().width as f32;
+        let tab = &self.tabs[self.active];
+        let focused = self.panes.get(&tab.focused);
+        let (bg, fg) = focused.map_or((Rgb { r: 28, g: 28, b: 31 }, Rgb { r: 230, g: 230, b: 235 }), |p| (p.frame.background, p.frame.foreground));
+        let accent = focused.and_then(|p| p.frame.cursor.color).unwrap_or(Rgb { r: 10, g: 132, b: 255 });
+        let title = focused.map(|p| p.term.title()).filter(|t| !t.is_empty()).unwrap_or_else(|| "Glyphium".into());
+        let title = match focused {
+            Some(p) => format!("{title} — {}×{}", p.cols, p.rows),
+            None => title,
+        };
+        let tabs = self
+            .tabs
+            .iter()
+            .map(|t| chrome::TabInfo {
+                title: self.panes.get(&t.focused).map(|p| p.term.title()).unwrap_or_default(),
+                queued: t.root.panes().iter().filter_map(|id| self.panes.get(id)).map(|p| p.queue.len()).sum(),
+            })
+            .collect();
+        let prompt = self.prompt.as_ref().map(|p| chrome::PromptInfo {
+            text: p.text.clone(),
+            waiting: self.panes.get(&p.pane).map(|pane| pane.queue.items().map(str::to_string).collect()).unwrap_or_default(),
+            unsupported: !self.queue_supported,
+        });
+        let area = self.content_area();
+        let dividers = tab
+            .root
+            .rects(area)
+            .into_iter()
+            .flat_map(|(_, r)| {
+                let right = (r.x + r.w < area.x + area.w).then(|| chrome::Area { x: (r.x + r.w) as f32, y: r.y as f32, w: layout::GAP as f32, h: r.h as f32 });
+                let below = (r.y + r.h < area.y + area.h).then(|| chrome::Area { x: r.x as f32, y: (r.y + r.h) as f32, w: r.w as f32, h: layout::GAP as f32 });
+                right.into_iter().chain(below)
+            })
+            .collect();
+        let input = chrome::Input {
+            width,
+            scale,
+            traffic_lights: cfg!(target_os = "macos") && window.fullscreen().is_none(),
+            title,
+            tabs,
+            active: self.active,
+            queued: focused.map_or(0, |p| p.queue.len()),
+            hover: self.hover,
+            prompt,
+            toast: self.notice.as_ref().map(|(t, _)| t.clone()),
+            warning: self.banner.clone(),
+            background: bg,
+            foreground: fg,
+            accent,
+            opacity: self.effective_opacity(),
+            dividers,
+        };
+        let renderer = &mut self.gpu.as_mut().unwrap().renderer;
+        let mut c = chrome::layout(&input, &mut |t, size, bold| renderer.text_width(t, size, bold, true));
+        let shapes = std::mem::take(&mut c.shapes);
+        self.chrome = c;
+        shapes
+    }
+
+    fn chrome_hit(&self, x: f32, y: f32) -> Option<chrome::Hit> {
+        self.chrome.hit(x, y)
+    }
+
+    /// A press on the chrome. True if it was there and has been handled.
+    fn chrome_click(&mut self, hit: chrome::Hit) {
+        use chrome::Hit;
+        if hit != Hit::Popover && hit != Hit::Queue {
+            self.prompt = None;
         }
-        if let Some(p) = &self.prompt {
-            let waiting = self.panes.get(&p.pane).map_or(0, |pane| pane.queue.len());
-            let label = if waiting > 0 { format!("Queue next ({waiting} waiting):") } else { "Queue next:".to_string() };
-            // Keep the end of a long command in view, where the typing happens.
-            let room = (self.bar.as_ref().map_or(80, |b| b.cols as usize)).saturating_sub(label.chars().count() + 4).max(8);
-            let n = p.text.chars().count();
-            let shown: String = p.text.chars().skip(n.saturating_sub(room)).collect();
-            return Some(format!("\x1b[48;5;24;97m\x1b[K {label} {shown}\x1b[7m \x1b[0m"));
-        }
-        if let Some((text, _)) = &self.notice {
-            return Some(format!("\x1b[48;5;238;97m\x1b[K {text}\x1b[0m"));
-        }
-        let mut s = String::new();
-        if self.tabs.len() > 1 {
-            s.push_str("\x1b[48;5;236m\x1b[K");
-            for (i, tab) in self.tabs.iter().enumerate() {
-                let title = self.panes.get(&tab.focused).map(|p| p.term.title()).unwrap_or_default();
-                let short: String = title.chars().take(24).collect();
-                let queued: usize = tab.root.panes().iter().filter_map(|id| self.panes.get(id)).map(|p| p.queue.len()).sum();
-                let mark = if queued > 0 { format!(" ⏳{queued}") } else { String::new() };
-                let label = if short.is_empty() { format!(" {}{mark} ", i + 1) } else { format!(" {} {short}{mark} ", i + 1) };
-                if i == self.active {
-                    s.push_str(&format!("\x1b[48;5;250;30m{label}\x1b[48;5;236;39m"));
+        match hit {
+            Hit::Tab(i) => {
+                self.active = i;
+                self.tab_changed();
+            }
+            Hit::CloseTab(i) => {
+                for id in self.tabs[i].root.panes() {
+                    self.close_pane(id);
+                }
+                self.hover = None;
+            }
+            Hit::NewTab => self.new_tab(),
+            Hit::Queue => {
+                if self.prompt.is_some() {
+                    self.prompt = None;
+                } else if let Some(id) = self.tabs.get(self.active).map(|t| t.focused) {
+                    self.clear_banner();
+                    self.preedit.clear();
+                    self.prompt = Some(Prompt { pane: id, text: String::new() });
+                }
+            }
+            Hit::Popover => {}
+            Hit::Empty => {
+                let now = Instant::now();
+                if self.last_bar_click.is_some_and(|t| now - t < DOUBLE_CLICK) {
+                    self.last_bar_click = None;
+                    let w = self.window();
+                    w.set_maximized(!w.is_maximized());
                 } else {
-                    s.push_str(&label);
+                    self.last_bar_click = Some(now);
+                    let _ = self.window().drag_window();
                 }
             }
         }
-        let focused = self.tabs.get(self.active).and_then(|t| self.panes.get(&t.focused));
-        if let Some(pane) = focused.filter(|p| p.queue.len() > 0) {
-            let list: Vec<&str> = pane.queue.items().collect();
-            if s.is_empty() {
-                s.push_str("\x1b[48;5;24;97m\x1b[K");
-            } else {
-                s.push_str("  \x1b[48;5;24;97m");
-            }
-            s.push_str(&format!(" Queued ({}): {} ", list.len(), list.join(" → ")));
-        }
-        if s.is_empty() {
-            return None;
-        }
-        s.push_str("\x1b[0m");
-        Some(s)
-    }
-
-    fn update_bar(&mut self) -> bool {
-        let m = self.gpu.as_ref().unwrap().renderer.metrics();
-        let cols = (self.window().inner_size().width / m.width).max(1) as u16;
-        let Some(text) = self.bar_content() else {
-            self.bar = None;
-            return false;
-        };
-        let renderer = &self.gpu.as_ref().unwrap().renderer;
-        let bar = self.bar.get_or_insert_with(|| Bar { term: Terminal::new(cols, 1, 0), frame: Frame::default(), view: renderer.new_view(), text: String::new(), cols });
-        if bar.cols != cols {
-            bar.cols = cols;
-            bar.term.resize(cols, 1, m.width, m.height);
-            bar.text.clear();
-        }
-        if bar.text != text {
-            // No autowrap: text longer than the bar is cut off instead of scrolling it away.
-            bar.term.write(b"\x1b[?25l\x1b[?7l\x1b[2J\x1b[H");
-            bar.term.write(text.as_bytes());
-            bar.text = text;
-        }
-        true
+        self.force_redraw = true;
+        self.request_redraw();
     }
 
     /// Types the next queued command in every pane whose shell is ready for it, hidden tabs
@@ -698,6 +760,12 @@ impl App {
             for pane in self.panes.values_mut() {
                 pane.term.write(seq.as_bytes());
             }
+        }
+        if old.blur != self.config.blur {
+            self.window().set_blur(self.config.blur);
+        }
+        if old.padding != self.config.padding {
+            self.layout_dirty = true;
         }
         #[cfg(target_os = "macos")]
         if old.option_as_meta != self.config.option_as_meta {
@@ -831,27 +899,30 @@ impl App {
         if self.gpu.as_ref().unwrap().lost.load(Ordering::SeqCst) {
             self.recover_gpu();
         }
-        if self.bar_content().is_some() != self.bar_shown {
+        if self.bar_height() != self.bar_px {
             self.layout_dirty = true;
         }
         if self.layout_dirty {
             self.apply_layout();
         }
         self.sync_title();
-        let has_bar = self.update_bar();
-        if has_bar {
-            let bar = self.bar.as_mut().unwrap();
-            bar.term.update_frame(&mut bar.frame);
-            let gpu = self.gpu.as_mut().unwrap();
-            self.force_redraw |= gpu.renderer.update(&mut bar.view, &bar.frame);
-        }
+        let opacity = self.effective_opacity();
+        let gpu = self.gpu.as_mut().unwrap();
+        gpu.renderer.set_background_alpha(opacity);
+        // Panes and the chrome cover every pixel with the background at `opacity`; clearing
+        // to it as well would stack the two and make the window more opaque than asked.
+        gpu.renderer.set_clear_alpha(if self.translucent { 0.0 } else { 1.0 });
         let visible = self.sync_panes();
+        let shapes = self.build_chrome();
+        let gpu = self.gpu.as_mut().unwrap();
+        let overlay = self.overlay.get_or_insert_with(|| gpu.renderer.new_overlay());
+        self.force_redraw |= gpu.renderer.update_overlay(overlay, &shapes);
         if !std::mem::take(&mut self.force_redraw) {
             return; // Nothing changed: no draw, no present.
         }
         let size = self.window().inner_size();
-        let bar_height = self.gpu.as_ref().unwrap().renderer.metrics().height;
-        let panes = draw_list(&self.panes, self.bar.as_ref().filter(|_| has_bar), bar_height, &visible, size.width);
+        let clear = self.clear_color();
+        let panes = draw_list(&self.panes, self.overlay.as_ref(), &visible, (size.width, size.height));
         let gpu = self.gpu.as_mut().unwrap();
         let texture = match gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -868,10 +939,16 @@ impl App {
         };
         let target = texture.texture.create_view(&Default::default());
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        gpu.renderer.draw(&mut encoder, &target, (size.width, size.height), SEPARATOR, &panes);
+        gpu.renderer.draw(&mut encoder, &target, (size.width, size.height), clear, &panes);
         gpu.renderer.queue().submit([encoder.finish()]);
         self.window.as_ref().unwrap().pre_present_notify();
         gpu.renderer.queue().present(texture);
+    }
+
+    /// The colour behind everything: the focused pane's background, so the title bar and
+    /// the gaps match the terminal.
+    fn clear_color(&self) -> Rgb {
+        self.tabs.get(self.active).and_then(|t| self.panes.get(&t.focused)).map_or(Rgb { r: 28, g: 28, b: 31 }, |p| p.frame.background)
     }
 
     fn screenshot(&mut self, path: &Path) {
@@ -879,9 +956,9 @@ impl App {
         self.redraw();
         let size = self.window().inner_size();
         let visible = self.tabs[self.active].root.panes();
-        let bar_height = self.gpu.as_ref().unwrap().renderer.metrics().height;
-        let panes = draw_list(&self.panes, self.bar.as_ref(), bar_height, &visible, size.width);
-        let rgba = pollster::block_on(self.gpu.as_mut().unwrap().renderer.render_panes_to_rgba(SEPARATOR, (size.width, size.height), &panes));
+        let clear = self.clear_color();
+        let panes = draw_list(&self.panes, self.overlay.as_ref(), &visible, (size.width, size.height));
+        let rgba = pollster::block_on(self.gpu.as_mut().unwrap().renderer.render_panes_to_rgba(clear, (size.width, size.height), &panes));
         let file = std::io::BufWriter::new(std::fs::File::create(path).expect("create screenshot"));
         let mut enc = png::Encoder::new(file, size.width, size.height);
         enc.set_color(png::ColorType::Rgba);
@@ -1144,12 +1221,14 @@ impl App {
 
     fn pane_at(&self, x: f32, y: f32) -> Option<(PaneId, (u16, u16))> {
         let m = self.gpu.as_ref()?.renderer.metrics();
+        let pad = self.pad_px as f32;
         for id in self.tabs.get(self.active)?.root.panes() {
             let p = self.panes.get(&id)?;
             let r = p.rect;
             if x >= r.x as f32 && y >= r.y as f32 && x < (r.x + r.w) as f32 && y < (r.y + r.h) as f32 {
-                let col = ((x - r.x as f32) as u32 / m.width).min(p.cols as u32 - 1) as u16;
-                let row = ((y - r.y as f32) as u32 / m.height).min(p.rows as u32 - 1) as u16;
+                // The padding belongs to the nearest cell.
+                let col = ((x - r.x as f32 - pad).max(0.0) as u32 / m.width).min(p.cols as u32 - 1) as u16;
+                let row = ((y - r.y as f32 - pad).max(0.0) as u32 / m.height).min(p.rows as u32 - 1) as u16;
                 return Some((id, (col, row)));
             }
         }
@@ -1163,18 +1242,30 @@ impl App {
         let any = self.pressed != 0;
         let (px, modifiers) = (self.mouse_px, Self::key_mods(self.mods));
         let shift = self.mods.shift_key();
+        let pad = self.pad_px;
         let Some(pane) = self.panes.get_mut(&id) else { return false };
         if shift || !pane.term.mouse_tracking() {
             return false;
         }
-        let input = MouseInput { action, button, mods: modifiers, x: px.0 - pane.rect.x as f32, y: px.1 - pane.rect.y as f32, any_button_pressed: any };
-        let bytes = pane.term.encode_mouse(&input, (pane.rect.w, pane.rect.h), (m.width, m.height));
+        let (ox, oy) = ((pane.rect.x + pad) as f32, (pane.rect.y + pad) as f32);
+        let input = MouseInput { action, button, mods: modifiers, x: (px.0 - ox).max(0.0), y: (px.1 - oy).max(0.0), any_button_pressed: any };
+        let bytes = pane.term.encode_mouse(&input, (pane.cols as u32 * m.width, pane.rows as u32 * m.height), (m.width, m.height));
         pane.session.write(bytes);
         true
     }
 
     fn mouse_button(&mut self, state: ElementState, button: MouseButton) {
         let (x, y) = self.mouse_px;
+        if state == ElementState::Pressed && button == 1 {
+            if let Some(hit) = self.chrome_hit(x, y) {
+                self.chrome_click(hit);
+                return;
+            }
+            // A click anywhere else closes the queue popover, as a popover does.
+            if self.prompt.take().is_some() {
+                self.request_redraw();
+            }
+        }
         let hit = self.pane_at(x, y);
         match state {
             ElementState::Pressed => {
@@ -1217,6 +1308,11 @@ impl App {
 
     fn mouse_moved(&mut self, pos: PhysicalPosition<f64>) {
         self.mouse_px = (pos.x as f32, pos.y as f32);
+        let hover = self.chrome_hit(pos.x as f32, pos.y as f32).filter(|h| !matches!(h, chrome::Hit::Empty | chrome::Hit::Popover));
+        if hover != self.hover {
+            self.hover = hover;
+            self.request_redraw();
+        }
         if let Some(drag) = &mut self.drag {
             let pane_id = drag.pane;
             let start = drag.start;
@@ -1266,14 +1362,16 @@ impl App {
         let Some(pane) = self.tabs.get(self.active).and_then(|t| self.panes.get(&t.focused)) else { return };
         let Some((x, y)) = pane.frame.cursor.pos else { return };
         let m = gpu.renderer.metrics();
-        window.set_ime_cursor_area(PhysicalPosition::new(pane.rect.x + x as u32 * m.width, pane.rect.y + y as u32 * m.height), PhysicalSize::new(m.width, m.height));
+        let pad = self.pad_px;
+        window.set_ime_cursor_area(PhysicalPosition::new(pane.rect.x + pad + x as u32 * m.width, pane.rect.y + pad + y as u32 * m.height), PhysicalSize::new(m.width, m.height));
     }
 
     /// Middle of a cell in the focused pane, for scripted mouse input.
     fn cell_px(&self, (col, row): (u16, u16)) -> PhysicalPosition<f64> {
         let m = self.gpu.as_ref().unwrap().renderer.metrics();
         let r = self.tabs.get(self.active).and_then(|t| self.panes.get(&t.focused)).map_or(Rect { x: 0, y: 0, w: 0, h: 0 }, |p| p.rect);
-        PhysicalPosition::new((r.x + col as u32 * m.width + m.width / 2) as f64, (r.y + row as u32 * m.height + m.height / 2) as f64)
+        let pad = self.pad_px;
+        PhysicalPosition::new((r.x + pad + col as u32 * m.width + m.width / 2) as f64, (r.y + pad + row as u32 * m.height + m.height / 2) as f64)
     }
 
     fn check_screen(&mut self, text: &str, wanted: bool) {
@@ -1446,6 +1544,42 @@ impl App {
                     }
                 }
                 Step::Menu(id) => self.menu_command(&id, event_loop),
+                Step::ClickChrome(target) => {
+                    use chrome::Hit;
+                    let hit = match target.split_once(' ') {
+                        Some(("tab", n)) => Hit::Tab(n.parse::<usize>().expect("tab N") - 1),
+                        Some(("close", n)) => {
+                            // The close button shows on hover.
+                            let i = n.parse::<usize>().expect("close N") - 1;
+                            self.hover = Some(Hit::Tab(i));
+                            Hit::CloseTab(i)
+                        }
+                        _ => match target.as_str() {
+                            "new-tab" => Hit::NewTab,
+                            "queue" => Hit::Queue,
+                            "terminal" => Hit::Popover, // placeholder, handled below
+                            _ => panic!("click-chrome tab N|close N|new-tab|queue|terminal"),
+                        },
+                    };
+                    self.force_redraw = true;
+                    self.redraw();
+                    let at = if target == "terminal" {
+                        let p = self.cell_px((2, 2));
+                        (p.x as f32, p.y as f32)
+                    } else {
+                        self.chrome.area(hit).unwrap_or_else(|| panic!("no {hit:?} on screen")).center()
+                    };
+                    self.mouse_moved(PhysicalPosition::new(at.0 as f64, at.1 as f64));
+                    self.mouse_button(ElementState::Pressed, 1);
+                    self.mouse_button(ElementState::Released, 1);
+                }
+                Step::ExpectPrompt(open) => {
+                    let got = self.prompt.is_some();
+                    self.report.get_or_insert_with(Default::default).check(&format!("queue popover {}", if open { "open" } else { "closed" }), got == open, "");
+                    if got != open {
+                        self.exit_code = 1;
+                    }
+                }
                 Step::Quit => {
                     if let Some(r) = &self.report {
                         r.print();
@@ -1459,17 +1593,17 @@ impl App {
     }
 }
 
-/// The top bar, if any, and the visible panes. Takes fields rather than `App`, so the renderer
-/// can stay mutably borrowed while drawing from this list.
-fn draw_list<'a>(panes: &'a HashMap<PaneId, Pane>, bar: Option<&'a Bar>, bar_height: u32, visible: &[PaneId], width: u32) -> Vec<(&'a PaneView, PaneRect)> {
+/// The visible panes, then the chrome over them. Takes fields rather than `App`, so the
+/// renderer can stay mutably borrowed while drawing from this list.
+fn draw_list<'a>(panes: &'a HashMap<PaneId, Pane>, overlay: Option<&'a PaneView>, visible: &[PaneId], (width, height): (u32, u32)) -> Vec<(&'a PaneView, PaneRect)> {
     let mut list = vec![];
-    if let Some(bar) = bar {
-        list.push((&bar.view, PaneRect { x: 0, y: 0, width, height: bar_height }));
-    }
     for id in visible {
         if let Some(p) = panes.get(id) {
             list.push((&p.view, pixel_rect(p.rect)));
         }
+    }
+    if let Some(o) = overlay {
+        list.push((o, PaneRect { x: 0, y: 0, width, height }));
     }
     list
 }
@@ -1548,13 +1682,22 @@ impl ApplicationHandler<UserEvent> for App {
         }
         // A first guess from the font size; the grid fits whatever size the window gets.
         let c = &self.config;
-        let size = LogicalSize::new(c.window_columns as f64 * c.font_pt as f64 * 0.6 + 2.0 * c.padding as f64, c.window_rows as f64 * c.font_pt as f64 * c.line_height as f64 + 2.0 * c.padding as f64);
+        let bar = chrome::height(1, 1.0) as f64;
+        let size = LogicalSize::new(c.window_columns as f64 * c.font_pt as f64 * 0.6 + 2.0 * c.padding as f64, c.window_rows as f64 * c.font_pt as f64 * c.line_height as f64 + 2.0 * c.padding as f64 + bar);
         #[allow(unused_mut)]
         let mut attrs = Window::default_attributes().with_title("Glyphium").with_inner_size(size);
+        // The title bar is drawn by the app, in the terminal's colours, behind the traffic
+        // lights; the window is see-through where the background is translucent.
         #[cfg(target_os = "macos")]
         {
             use winit::platform::macos::WindowAttributesExtMacOS;
-            attrs = attrs.with_option_as_alt(option_as_alt(&self.config));
+            attrs = attrs
+                .with_option_as_alt(option_as_alt(&self.config))
+                .with_titlebar_transparent(true)
+                .with_fullsize_content_view(true)
+                .with_title_hidden(true)
+                .with_transparent(true)
+                .with_blur(self.config.blur);
         }
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         window.set_ime_allowed(true);

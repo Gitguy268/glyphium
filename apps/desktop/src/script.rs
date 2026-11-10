@@ -57,6 +57,10 @@ pub enum Step {
     ExpectConfig(String, String),
     /// A menu item id, as choosing it in the menu bar sends.
     Menu(String),
+    /// A click on the window chrome: `tab N`, `close N`, `new-tab`, `queue`, or `terminal`
+    /// (a click into the focused pane).
+    ClickChrome(String),
+    ExpectPrompt(bool),
     Quit,
 }
 
@@ -121,6 +125,12 @@ pub fn parse(source: &str) -> Vec<Step> {
                 "theme" => Step::Theme(arg.into()),
                 "reload-config" => Step::ReloadConfig,
                 "menu" => Step::Menu(arg.into()),
+                "click-chrome" => Step::ClickChrome(arg.into()),
+                "expect-prompt" => Step::ExpectPrompt(match arg {
+                    "open" => true,
+                    "closed" => false,
+                    _ => panic!("expect-prompt open|closed"),
+                }),
                 "appearance" => Step::Appearance(match arg {
                     "dark" => true,
                     "light" => false,
