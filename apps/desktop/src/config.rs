@@ -248,6 +248,13 @@ pub fn parse(text: &str, theme_exists: &dyn Fn(&str) -> bool) -> (Config, Vec<St
     (config, warnings)
 }
 
+/// True if `rest` (what follows a `#`) is a whole colour: 3 or 6 hex digits, then the end of
+/// the value.
+fn is_color_after_hash(rest: &str) -> bool {
+    let n = rest.chars().take_while(char::is_ascii_hexdigit).count();
+    (n == 3 || n == 6) && rest[n..].chars().next().is_none_or(|c| c.is_whitespace() || c == '"' || c == '\'')
+}
+
 /// Drops a `#` comment that starts a line or follows a space, leaving `#` inside quotes and in
 /// colours like `#1c1c1f` alone.
 fn strip_comment(line: &str) -> &str {
@@ -256,9 +263,14 @@ fn strip_comment(line: &str) -> &str {
     for (i, c) in line.char_indices() {
         match (c, quote) {
             ('"' | '\'', None) => quote = Some(c),
-            (c, Some(q)) if c == q => quote = None,
-            ('#', None) if prev.is_whitespace() && !line[i + 1..].starts_with(|c: char| c.is_ascii_hexdigit()) => return &line[..i],
+            (c, Some(q)) if c == q => {
+                quote = None;
+                // A `#` right after a closing quote starts a comment, as after a space.
+                prev = ' ';
+                continue;
+            }
             ('#', None) if i == 0 => return &line[..i],
+            ('#', None) if prev.is_whitespace() && !is_color_after_hash(&line[i + 1..]) => return &line[..i],
             _ => {}
         }
         prev = c;
@@ -369,6 +381,14 @@ mod tests {
         let (c, w) = parse("font_size = huge\ntheme = neon\nwhat = 1\njunk\nscrollback = -3\nopacity = 0.1\ncursor_style = box\nbackground = #zzz\ntheme_dark = auto\n", &builtin);
         assert_eq!(c, Config::default());
         assert_eq!(w.len(), 9, "{w:?}");
+    }
+
+    #[test]
+    fn comments_after_values_and_colours() {
+        let (c, w) = parse("font_size = 14 #bigger\nopacity = 0.8 #80%\nbackground = #101010 # dark\nforeground = #abc\ncursor_color = \"#a0b0c0\"#quoted\n", &builtin);
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!((c.font_pt, c.opacity), (14.0, Some(0.8)));
+        assert_eq!(c.colors, vec![("background".into(), "#101010".into()), ("foreground".into(), "#abc".into()), ("cursor_color".into(), "#a0b0c0".into())]);
     }
 
     #[test]
