@@ -1,0 +1,46 @@
+# Self-hosted Flatpak of Glyphium. It repackages the Linux binary built by
+# .github/workflows/release.yml (put it next to this file as glyphium-linux-x86_64) and adds
+# host-spawn, so the shell runs on your computer instead of inside the sandbox.
+app-id: io.github.gitguy268.glyphium
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+command: glyphium
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # A terminal runs your host shell: host-spawn starts it through the Flatpak portal.
+  - --talk-name=org.freedesktop.Flatpak
+  - --filesystem=xdg-config/glyphium
+modules:
+  - name: glyphium
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 glyphium-linux-x86_64 /app/libexec/glyphium
+      - install -Dm755 host-spawn-x86_64 /app/bin/host-spawn
+      - install -Dm755 glyphium.sh /app/bin/glyphium
+      - install -Dm644 io.github.gitguy268.glyphium.desktop /app/share/applications/io.github.gitguy268.glyphium.desktop
+      - install -Dm644 io.github.gitguy268.glyphium.metainfo.xml /app/share/metainfo/io.github.gitguy268.glyphium.metainfo.xml
+      - install -Dm644 glyphium.svg /app/share/icons/hicolor/scalable/apps/io.github.gitguy268.glyphium.svg
+      - install -Dm644 LICENSE /app/share/licenses/io.github.gitguy268.glyphium/LICENSE
+      - install -Dm644 NOTICE /app/share/licenses/io.github.gitguy268.glyphium/NOTICE
+    sources:
+      - type: file
+        path: glyphium-linux-x86_64
+      - type: file
+        url: https://github.com/1player/host-spawn/releases/download/v1.6.2/host-spawn-x86_64
+        sha256: 077bc09a087292447ba17cfe2156a93f71bf56c4c6be8e38d3abe65c1240f34c
+      - type: file
+        path: glyphium.sh
+      - type: file
+        path: ../../apps/desktop/assets/glyphium.svg
+      - type: file
+        path: ../../LICENSE
+      - type: file
+        path: ../../NOTICE
+      - type: file
+        path: io.github.gitguy268.glyphium.desktop
+      - type: file
+        path: io.github.gitguy268.glyphium.metainfo.xml

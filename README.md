@@ -23,6 +23,29 @@ brew install gitguy268/tap/glyphium
 
 This builds Ghostty's terminal core and glyphium from source on macOS (a few minutes; Rust and Zig are fetched as build tools). Then run `glyphium`.
 
+Or install the release build as an app (Apple silicon), which puts Glyphium in Applications and `glyphium` on your PATH:
+
+```sh
+brew install --cask gitguy268/tap/glyphium-app
+```
+
+It's signed ad hoc, not notarised, so the cask clears the quarantine flag. Use the formula or the cask, not both.
+
+<details>
+<summary><b>Linux (Flatpak)</b></summary>
+
+Download `io.github.gitguy268.glyphium.flatpak` from the [latest release](https://github.com/Gitguy268/glyphium/releases/latest), then:
+
+```sh
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user ./io.github.gitguy268.glyphium.flatpak
+flatpak run io.github.gitguy268.glyphium
+```
+
+The Linux build is new and only checked in CI. Your shell runs on the host through host-spawn. This Flatpak is built by this repo; it isn't on Flathub. Details are in [packaging/flatpak](packaging/flatpak/README.md).
+
+</details>
+
 <!-- run-steps:start -->
 ## Run it locally, step by step
 
