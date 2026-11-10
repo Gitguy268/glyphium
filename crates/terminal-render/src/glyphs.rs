@@ -117,6 +117,10 @@ pub struct Glyphs {
     buffer: Buffer,
     metrics: CellMetrics,
     clusters: HashMap<(String, u8), Vec<PlacedGlyph>>,
+    /// Lines of UI text by (text, size in 1/64 px, bold, ui face): glyphs and width.
+    lines: HashMap<(String, u32, bool, bool), (Vec<PlacedGlyph>, f32)>,
+    /// Proportional face for window chrome; the terminal family when none is found.
+    ui_family: String,
     mask_shelf: Shelf,
     color_shelf: Shelf,
     pub uploads: Vec<Upload>,
@@ -161,6 +165,24 @@ fn pick_family(fonts: &FontSystem, wanted: Option<&str>) -> String {
         .unwrap_or_else(|| DEFAULT_FAMILY.to_string())
 }
 
+/// The system's interface font, found by family name. macOS keeps its system font under a
+/// hidden dot-prefixed name; the others are common UI faces elsewhere.
+fn ui_family(fonts: &FontSystem) -> String {
+    const WANTED: [&str; 9] = [".SF NS", "SF Pro", "SF Pro Text", "System Font", "Helvetica Neue", "Segoe UI", "Inter", "Cantarell", "Noto Sans"];
+    let mut have = std::collections::HashSet::new();
+    for f in fonts.db().faces() {
+        for (n, _) in &f.families {
+            have.insert(n.as_str());
+        }
+    }
+    WANTED.iter().find(|w| have.contains(**w)).map_or_else(|| DEFAULT_FAMILY.to_string(), |w| w.to_string())
+}
+
+/// Line box height for UI text at `size_px`.
+pub fn ui_line_height(size_px: f32) -> f32 {
+    (size_px * 1.3).ceil()
+}
+
 fn sane_line_height(v: f32) -> f32 {
     if v.is_finite() && (0.8..=3.0).contains(&v) { v } else { DEFAULT_LINE_HEIGHT }
 }
@@ -180,6 +202,7 @@ impl Glyphs {
         }
         let mut fonts = FontSystem::new_with_locale_and_db("en-US".into(), db);
         let family = pick_family(&fonts, config.family.as_deref());
+        let ui_family = ui_family(&fonts);
         let line_height = sane_line_height(config.line_height);
         let (buffer, metrics) = measure(&mut fonts, config.size_px, &family, line_height);
         let (mask_size, color_size) = config.atlas_sizes.unwrap_or((MASK_ATLAS_SIZE, COLOR_ATLAS_SIZE));
@@ -187,6 +210,8 @@ impl Glyphs {
             fonts,
             family,
             line_height,
+            lines: HashMap::new(),
+            ui_family,
             swash: SwashCache::new(),
             buffer,
             metrics,
@@ -222,6 +247,81 @@ impl Glyphs {
         &self.family
     }
 
+    pub fn ui_family(&self) -> &str {
+        &self.ui_family
+    }
+
+    /// Glyphs for one line of text at any size, placed from the top left of its line box
+    /// ([`ui_line_height`] tall), and its advance width. `ui` picks the interface face over
+    /// the terminal font. Cached until the atlas resets.
+    pub fn line(&mut self, text: &str, size_px: f32, bold: bool, ui: bool) -> Result<(&[PlacedGlyph], f32), AtlasFull> {
+        let key = (text.to_string(), (size_px * 64.0) as u32, bold, ui);
+        if !self.lines.contains_key(&key) {
+            match self.rasterize_line(text, size_px, bold, ui) {
+                Ok(v) => {
+                    self.lines.insert(key.clone(), v);
+                }
+                Err(AtlasFull) if self.draw_what_fits => return Ok((&[], 0.0)),
+                Err(AtlasFull) => return Err(AtlasFull),
+            }
+        }
+        let (g, w) = &self.lines[&key];
+        Ok((g, *w))
+    }
+
+    fn rasterize_line(&mut self, text: &str, size_px: f32, bold: bool, ui: bool) -> Result<(Vec<PlacedGlyph>, f32), AtlasFull> {
+        let line_h = ui_line_height(size_px);
+        let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(size_px, line_h));
+        buffer.set_wrap(Wrap::None);
+        buffer.set_size(None, Some(line_h * 2.0));
+        let family = if ui { self.ui_family.clone() } else { self.family.clone() };
+        let mut a = Attrs::new().family(Family::Name(&family));
+        if bold {
+            a = a.weight(if ui { Weight::SEMIBOLD } else { Weight::BOLD });
+        }
+        buffer.set_text(text, &a, Shaping::Advanced, None);
+        buffer.shape_until_scroll(&mut self.fonts, false);
+        let mut physical = vec![];
+        let mut width = 0.0f32;
+        let mut baseline = 0.0f32;
+        if let Some(run) = buffer.layout_runs().next() {
+            width = run.line_w;
+            baseline = run.line_y;
+            for g in run.glyphs {
+                physical.push(g.physical((0.0, 0.0), 1.0));
+            }
+        }
+        let mut out = vec![];
+        for p in physical {
+            let Some(image) = self.swash.get_image(&mut self.fonts, p.cache_key).as_ref() else { continue };
+            let (w, h) = (image.placement.width, image.placement.height);
+            if w == 0 || h == 0 {
+                continue;
+            }
+            let (shelf, color) = match image.content {
+                SwashContent::Mask => (&mut self.mask_shelf, false),
+                SwashContent::Color => (&mut self.color_shelf, true),
+                SwashContent::SubpixelMask => continue,
+            };
+            if !shelf.fits_alone(w, h) {
+                continue;
+            }
+            let page = shelf.size as f32;
+            let (x, y) = shelf.alloc(w, h).ok_or(AtlasFull)?;
+            self.uploads.push(Upload { color, x, y, width: w, height: h, data: image.data.clone() });
+            let uv = [x as f32 / page, y as f32 / page, w as f32 / page, h as f32 / page];
+            let (left, top) = (image.placement.left, image.placement.top);
+            let placed = if color {
+                let scale = (line_h / h as f32).min(1.0);
+                PlacedGlyph { left: p.x as f32, top: (line_h - h as f32 * scale) / 2.0, width: w as f32 * scale, height: h as f32 * scale, uv, color }
+            } else {
+                PlacedGlyph { left: (p.x + left) as f32, top: baseline.round() + (p.y - top) as f32, width: w as f32, height: h as f32, uv, color }
+            };
+            out.push(placed);
+        }
+        Ok((out, width))
+    }
+
     /// Adds font data (a font file the caller read), so its families can be chosen.
     pub fn add_font(&mut self, data: Vec<u8>) {
         self.fonts.db_mut().load_font_data(data);
@@ -238,6 +338,7 @@ impl Glyphs {
     /// Drops every cached cluster and resets the atlases, for eviction and device loss.
     pub fn reset(&mut self) {
         self.clusters.clear();
+        self.lines.clear();
         self.mask_shelf = Shelf::new(self.mask_shelf.size);
         self.color_shelf = Shelf::new(self.color_shelf.size);
         self.uploads.clear();
