@@ -1,0 +1,107 @@
+name: Rolling release
+
+# Keeps one GitHub Release, tagged `latest`, in step with the newest commit on `main`:
+# the tag is moved to that commit and the assets are rebuilt and replaced on every push.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rolling-release
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS app (arm64)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      GHOSTTY_COMMIT: cec8b92f1ecd176a20a56aa405021e7ae991b996
+      ZIG_VERSION: 0.17.0
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: libclang for bindgen
+        run: echo "LIBCLANG_PATH=$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib" >> "$GITHUB_ENV"
+      - name: Cache the Ghostty build
+        id: ghostty-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            .tools/ghostty/include
+            .tools/ghostty/zig-out
+          key: ghostty-${{ runner.os }}-${{ runner.arch }}-${{ env.GHOSTTY_COMMIT }}-zig${{ env.ZIG_VERSION }}
+      - uses: mlugg/setup-zig@v2.2.1
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Build libghostty-vt
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        run: |
+          git init -q .tools/ghostty
+          git -C .tools/ghostty fetch -q --depth 1 https://github.com/ghostty-org/ghostty.git "$GHOSTTY_COMMIT"
+          git -C .tools/ghostty checkout -q FETCH_HEAD
+          (cd .tools/ghostty && zig build -Demit-lib-vt -Doptimize=ReleaseFast)
+      - name: Build
+        run: cargo build --release -p glyphium
+      - name: Package
+        run: |
+          mkdir -p pkg/glyphium-macos-arm64 out
+          cp target/release/glyphium LICENSE README.md pkg/glyphium-macos-arm64/
+          [ -e NOTICE ] && cp NOTICE pkg/glyphium-macos-arm64/
+          tar -C pkg -czf out/glyphium-macos-arm64.tar.gz glyphium-macos-arm64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rolling-macos
+          path: out/*
+          if-no-files-found: error
+
+  publish:
+    name: Update the rolling release
+    needs: [macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: rolling-*
+          path: out
+          merge-multiple: true
+      - name: Move the latest tag and replace the assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          BRANCH: main
+          PRERELEASE: "false"
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          if [ -n "$(ls -A out)" ]; then (cd out && sha256sum -- * > SHA256SUMS.txt); fi
+          ls -l out
+          notes="Built automatically from the latest commit on \`$BRANCH\` ([\`${SHA::7}\`](https://github.com/$GH_REPO/commit/$SHA), $(date -u '+%Y-%m-%d %H:%M UTC')). This release is replaced on every push, so it can change at any time."
+          # Point the tag at this commit (create it the first time).
+          if gh api "repos/$GH_REPO/git/ref/tags/latest" > /dev/null 2>&1; then
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/latest" -f sha="$SHA" -F force=true > /dev/null
+          else
+            gh api "repos/$GH_REPO/git/refs" -f ref=refs/tags/latest -f sha="$SHA" > /dev/null
+          fi
+          if [ "$PRERELEASE" = true ]; then flags=(--prerelease --latest=false); else flags=(--prerelease=false --latest); fi
+          if gh release view latest > /dev/null 2>&1; then
+            gh release edit latest --title "Rolling Release" --notes "$notes" "${flags[@]}"
+            # Drop assets that this build no longer produces.
+            gh release view latest --json assets --jq '.assets[].name' | while IFS= read -r a; do
+              [ -e "out/$a" ] || gh release delete-asset latest "$a" --yes
+            done
+          else
+            gh release create latest --verify-tag --title "Rolling Release" --notes "$notes" "${flags[@]}"
+          fi
+          if [ -n "$(ls -A out)" ]; then gh release upload latest out/* --clobber; fi
