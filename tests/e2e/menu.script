@@ -1,0 +1,34 @@
+# Menu bar items run the same actions as their shortcuts (sent by id, past the OS menu).
+wait 800
+type PS1='$ '\r
+wait 200
+menu theme:dracula
+expect-theme dracula
+menu action:next-theme
+expect-theme catppuccin-mocha
+menu theme:auto
+appearance light
+expect-theme glass-light
+menu action:new-tab
+wait 600
+expect-tabs 2
+menu action:split-right
+wait 600
+expect-panes 2
+menu action:close
+wait 300
+expect-panes 1
+# Queue Next Command opens the prompt; while it is open other menu actions do nothing.
+type sleep 1\r
+wait 100
+menu action:queue
+prompt-type echo from-menu-$((6*7))
+menu action:new-tab
+expect-tabs 2
+prompt-key Enter
+expect-queued 1
+wait 1800
+expect-screen from-menu-42
+menu action:prev-tab
+expect-tabs 2
+quit

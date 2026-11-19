@@ -17,7 +17,16 @@ Fonts:
   test fixtures only.
 
 Themes (crates/terminal-core/src/theme.rs):
-  Both are unofficial fan tributes, not affiliated with or endorsed by Nujabes's estate,
+  Glass Dark and Glass Light: original palettes. They follow the look of a translucent macOS
+  window; no Apple colours, assets or code are used.
+  Palettes below are colour values from MIT-licensed projects (licence text further down):
+    Solarized Dark and Light: Copyright (c) 2011 Ethan Schoonover (altercation/solarized).
+      Bright black is base01 in the dark variant, so it stays visible.
+    Dracula: Copyright (c) 2023 Dracula Theme (dracula/dracula-theme).
+    Catppuccin Mocha and Latte: Copyright (c) 2021 Catppuccin (catppuccin/catppuccin).
+    Tokyo Night: Copyright (c) 2018-present Enkia (enkia/tokyo-night-vscode-theme); terminal
+      colours with the editor's background and foreground, and bright black lightened.
+  Nujabes and Ye: Graduation are unofficial fan tributes, not affiliated with or endorsed by Nujabes's estate,
   Hydeout Productions, Ye (Kanye West), Takashi Murakami or any rights holder. No album art,
   logos or lyrics are included.
   Nujabes: palette adapted from HalmyLyseas/omarchy-nujabes-theme, Copyright (c) 2026 Halmyrach,
@@ -42,6 +51,14 @@ Themes (crates/terminal-core/src/theme.rs):
   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
+
+Linked into the macOS app:
+  muda 0.21 (tauri-apps/muda): Apache-2.0 OR MIT. The native menu bar.
+
+Fonts read at run time, never bundled:
+  SF Mono and the macOS system font belong to Apple. Glyphium loads them from the user's own
+  system when asked to (font_family = "SF Mono") and for the window chrome; they are not
+  included in this repository or in any build.
 
 Ideas, no code:
   VTE, GNOME Terminal, Ptyxis: LGPL-3.0 / GPL-3.0. Behaviour comparison only.

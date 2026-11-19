@@ -2,7 +2,7 @@
 //! so CI without a GPU stays green without claiming anything.
 
 use glyphium_terminal_core::{Frame, Rgb, Terminal, Theme};
-use glyphium_terminal_render::{FontConfig, OFFSCREEN_FORMAT, PaneRect, Renderer};
+use glyphium_terminal_render::{FontConfig, OFFSCREEN_FORMAT, PaneRect, Renderer, Shape};
 
 fn renderer(size_px: f32) -> Option<Renderer> {
     renderer_with(FontConfig { size_px, ..Default::default() })
@@ -183,4 +183,105 @@ fn theme_colours_the_background_and_selection() {
     assert_eq!(pixel(0, 0), theme.selection, "selected cell's corner");
     assert_eq!(pixel(size.0 - 1, 0), theme.background, "unselected cell");
     assert_eq!(pixel(size.0 - 1, m.height), theme.background, "empty row");
+}
+
+const BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
+
+fn pixel(rgba: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
+    let i = ((y * width + x) * 4) as usize;
+    [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+}
+
+fn draw_overlay(r: &mut Renderer, shapes: &[Shape], size: (u32, u32)) -> Vec<u8> {
+    let mut view = r.new_overlay();
+    assert!(r.update_overlay(&mut view, shapes));
+    let rect = PaneRect { x: 0, y: 0, width: size.0, height: size.1 };
+    pollster::block_on(r.render_panes_to_rgba(BLACK, size, &[(&view, rect)]))
+}
+
+#[test]
+fn rounded_rect_has_clear_corners() {
+    let Some(mut r) = renderer(16.0) else { return };
+    let red = [1.0, 0.0, 0.0, 1.0];
+    let rgba = draw_overlay(&mut r, &[Shape::Rect { x: 0.0, y: 0.0, w: 40.0, h: 40.0, radius: 16.0, color: red }], (40, 40));
+    assert_eq!(pixel(&rgba, 40, 0, 0), [0, 0, 0, 255], "the corner is outside the curve");
+    assert_eq!(pixel(&rgba, 40, 20, 20), [255, 0, 0, 255]);
+    assert_eq!(pixel(&rgba, 40, 20, 0), [255, 0, 0, 255], "straight edges are filled to the border");
+    let edge = pixel(&rgba, 40, 4, 4)[0];
+    assert!(edge > 0 && edge < 255 || edge == 0, "anti-aliased or outside near the curve: {edge}");
+}
+
+#[test]
+fn ring_draws_only_the_outline() {
+    let Some(mut r) = renderer(16.0) else { return };
+    let white = [1.0, 1.0, 1.0, 1.0];
+    let rgba = draw_overlay(&mut r, &[Shape::Ring { x: 0.0, y: 0.0, w: 40.0, h: 30.0, radius: 8.0, width: 2.0, color: white }], (40, 30));
+    assert_eq!(pixel(&rgba, 40, 20, 15), [0, 0, 0, 255], "the middle stays clear");
+    assert_eq!(pixel(&rgba, 40, 20, 0), [255, 255, 255, 255]);
+    assert_eq!(pixel(&rgba, 40, 20, 3), [0, 0, 0, 255], "two pixels wide");
+}
+
+#[test]
+fn translucent_fill_is_premultiplied() {
+    let Some(mut r) = renderer(16.0) else { return };
+    let rgba = draw_overlay(&mut r, &[Shape::Rect { x: 0.0, y: 0.0, w: 10.0, h: 10.0, radius: 0.0, color: [1.0, 1.0, 1.0, 0.5] }], (10, 10));
+    let p = pixel(&rgba, 10, 5, 5);
+    assert!((126..=129).contains(&p[0]), "half white over black: {p:?}");
+}
+
+#[test]
+fn overlay_text_draws_and_idles() {
+    let Some(mut r) = renderer(16.0) else { return };
+    let shapes = [Shape::Text { x: 4.0, y: 2.0, text: "Queue ⏎".into(), size_px: 20.0, bold: true, ui: true, color: [1.0, 1.0, 1.0, 1.0] }];
+    let mut view = r.new_overlay();
+    assert!(r.update_overlay(&mut view, &shapes));
+    assert!(!r.update_overlay(&mut view, &shapes), "same shapes: nothing to do");
+    assert!(r.text_width("Queue ⏎", 20.0, true, true) > 40.0);
+    let rect = PaneRect { x: 0, y: 0, width: 120, height: 30 };
+    let rgba = pollster::block_on(r.render_panes_to_rgba(BLACK, (120, 30), &[(&view, rect)]));
+    let lit = rgba.chunks(4).filter(|p| p[0] > 128).count();
+    assert!(lit > 30, "text pixels drawn: {lit}");
+    // A font change drops cached glyph positions: the overlay must rebuild.
+    r.set_font_size(24.0);
+    assert!(r.update_overlay(&mut view, &shapes), "stale glyphs force a rebuild");
+}
+
+#[test]
+fn overlay_rebuilds_after_atlas_eviction() {
+    let Some(mut r) = renderer_with(tiny_atlas()) else { return };
+    let shapes = [Shape::Text { x: 0.0, y: 0.0, text: "Tab".into(), size_px: 16.0, bold: false, ui: true, color: [1.0; 4] }];
+    let mut overlay = r.new_overlay();
+    r.update_overlay(&mut overlay, &shapes);
+    let mut view = r.new_view();
+    let mut p = Pane::new(8, 2);
+    let chars: Vec<char> = LOREM.filter_map(char::from_u32).collect();
+    for line in chars.chunks(8) {
+        let line: String = line.iter().collect();
+        r.update(&mut view, p.sync(format!("\x1b[H{line}").as_bytes()));
+    }
+    assert!(r.stats.atlas_evictions > 0);
+    assert!(r.update_overlay(&mut overlay, &shapes), "evicted glyphs force a rebuild");
+}
+
+#[test]
+fn background_alpha_and_inset() {
+    let Some(mut r) = renderer(16.0) else { return };
+    let mut p = Pane::new(4, 2);
+    let mut view = r.new_view();
+    r.set_background_alpha(0.5);
+    r.set_clear_alpha(0.0);
+    p.term.set_theme(Some(&Theme::by_name("glass-dark").unwrap()));
+    r.update(&mut view, p.sync(b"\x1b[41mX"));
+    view.set_inset(6.0, 6.0);
+    let (w, h) = r.pixel_size(4, 2);
+    let size = (w + 12, h + 12);
+    let rect = PaneRect { x: 0, y: 0, width: size.0, height: size.1 };
+    let rgba = pollster::block_on(r.render_panes_to_rgba(BLACK, size, &[(&view, rect)]));
+    let pad = pixel(&rgba, size.0, 1, 1);
+    assert!((126..=129).contains(&pad[3]), "padding has the translucent background: {pad:?}");
+    let cell = pixel(&rgba, size.0, 7, 7);
+    assert_eq!(cell[3], 255, "a cell with its own background stays opaque: {cell:?}");
+    assert!(cell[0] > 150, "the red cell starts after the inset: {cell:?}");
+    let empty = pixel(&rgba, size.0, size.0 - 2, size.1 - 2);
+    assert!((126..=129).contains(&empty[3]), "default background is translucent: {empty:?}");
 }

@@ -21,6 +21,10 @@ struct Out {
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
     @location(2) @interpolate(flat) kind: u32,
+    // Rounded shapes only: position inside the quad, its size, and radius / ring width.
+    @location(3) local: vec2<f32>,
+    @location(4) @interpolate(flat) size: vec2<f32>,
+    @location(5) @interpolate(flat) params: vec4<f32>,
 };
 
 @vertex
@@ -32,7 +36,17 @@ fn vs(in: In) -> Out {
     out.uv = in.uv.xy + corner * in.uv.zw;
     out.color = in.color;
     out.kind = in.kind;
+    out.local = corner * in.size;
+    out.size = in.size;
+    out.params = in.uv;
     return out;
+}
+
+// Signed distance to a rounded rectangle centred on the origin: negative inside.
+fn rounded(p: vec2<f32>, half: vec2<f32>, radius: f32) -> f32 {
+    let r = min(radius, min(half.x, half.y));
+    let q = abs(p) - half + vec2<f32>(r, r);
+    return length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
 @fragment
@@ -44,6 +58,16 @@ fn fs(in: Out) -> @location(0) vec4<f32> {
     switch in.kind {
         case 1u: { c = vec4<f32>(in.color.rgb, in.color.a * mask); }
         case 2u: { c = vec4<f32>(color.rgb, color.a * in.color.a); }
+        case 3u: {
+            // Filled rounded rectangle, or only its outline when params.y (ring width) > 0.
+            let half = in.size * 0.5;
+            let d = rounded(in.local - half, half, in.params.x);
+            var cover = clamp(0.5 - d, 0.0, 1.0);
+            if in.params.y > 0.0 {
+                cover = cover * clamp(0.5 + d + in.params.y, 0.0, 1.0);
+            }
+            c = vec4<f32>(in.color.rgb, in.color.a * cover);
+        }
         default: { c = in.color; }
     }
     return vec4<f32>(c.rgb * c.a, c.a);

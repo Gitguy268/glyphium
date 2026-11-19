@@ -11,7 +11,9 @@ failed=0
 for n in "${names[@]}"; do
   echo "== $n"
   # A hung app must fail the run rather than hang it, so each script gets a time limit.
-  "$bin" --config /nonexistent --script "$here/$n.script" -e /bin/bash --norc --noprofile &
+  # Each script gets its own empty settings folder, never the user's ~/.config/glyphium.
+  cfg="$out/config-$n"; rm -rf "$cfg"; mkdir -p "$cfg"
+  GLYPHIUM_CONFIG_DIR="$cfg" "$bin" --config "$cfg/config.toml" --script "$here/$n.script" -e /bin/bash --norc --noprofile &
   pid=$!
   ( sleep 90; kill -9 $pid 2>/dev/null ) & watchdog=$!
   wait $pid; rc=$?

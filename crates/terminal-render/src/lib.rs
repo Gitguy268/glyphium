@@ -11,7 +11,7 @@ mod glyphs;
 use glyphium_terminal_core::{Cell, CursorStyle, Frame, Rgb, attrs};
 use wgpu::util::DeviceExt as _;
 
-pub use glyphs::{CellMetrics, FontConfig};
+pub use glyphs::{CellMetrics, DEFAULT_FAMILY, DEFAULT_LINE_HEIGHT, FontConfig, ui_line_height};
 use glyphs::{AtlasFull, COLOR_ATLAS_SIZE, Glyphs, MASK_ATLAS_SIZE, PlacedGlyph, STYLE_BOLD, STYLE_ITALIC};
 
 /// Non-sRGB, so sRGB colour values pass through unchanged on every platform.
@@ -30,6 +30,25 @@ struct Instance {
 const KIND_SOLID: u32 = 0;
 const KIND_MASK: u32 = 1;
 const KIND_COLOR: u32 = 2;
+const KIND_ROUNDED: u32 = 3;
+
+/// Something drawn by an overlay view (window chrome, panels), in the view's own pixels.
+/// Shapes draw in order, so later ones cover earlier ones. Colours are straight RGBA, 0 to 1.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Shape {
+    /// A filled rectangle with rounded corners (radius 0 for square).
+    Rect { x: f32, y: f32, w: f32, h: f32, radius: f32, color: [f32; 4] },
+    /// Only the outline of a rounded rectangle, `width` pixels wide, inside its bounds.
+    Ring { x: f32, y: f32, w: f32, h: f32, radius: f32, width: f32, color: [f32; 4] },
+    /// One line of text; `y` is the top of its line box ([`ui_line_height`] tall). `ui` uses
+    /// the system interface font, otherwise the terminal font.
+    Text { x: f32, y: f32, text: String, size_px: f32, bold: bool, ui: bool, color: [f32; 4] },
+}
+
+/// Straight RGBA from a colour and an alpha.
+pub fn color(c: Rgb, a: f32) -> [f32; 4] {
+    rgba(c, a)
+}
 
 fn rgba(c: Rgb, a: f32) -> [f32; 4] {
     [c.r as f32 / 255.0, c.g as f32 / 255.0, c.b as f32 / 255.0, a]
@@ -73,6 +92,10 @@ pub struct Renderer {
     glyph_generation: u64,
     /// What the pipeline draws to; offscreen targets must match it.
     format: wgpu::TextureFormat,
+    /// Opacity of each pane's default background, for translucent windows.
+    background_alpha: f32,
+    /// Opacity of the colour `draw` clears to.
+    clear_alpha: f32,
     pub stats: Stats,
 }
 
@@ -90,12 +113,24 @@ pub struct PaneView {
     glyph_generation: u64,
     /// Set by `invalidate`: rebuild every row whatever the frame says.
     rebuild_all: bool,
+    /// Pane views fill their whole rectangle with the background; overlays draw only shapes.
+    fill: bool,
+    /// Distance from the drawn rectangle's corner to the first cell: padding around the text,
+    /// filled with the pane's background.
+    inset: (f32, f32),
+    /// The overlay's last shapes, so unchanged ones cost nothing.
+    shapes: Vec<Shape>,
 }
 
 impl PaneView {
     /// The next `update` rebuilds every row and re-uploads the instance buffer.
     pub fn invalidate(&mut self) {
         self.rebuild_all = true;
+    }
+
+    /// Sets the padding between the drawn rectangle's corner and the first cell.
+    pub fn set_inset(&mut self, x: f32, y: f32) {
+        self.inset = (x, y);
     }
 }
 
@@ -216,6 +251,8 @@ impl Renderer {
             glyphs: Glyphs::new(fonts),
             glyph_generation: 0,
             format,
+            background_alpha: 1.0,
+            clear_alpha: 1.0,
             stats: Stats::default(),
         }
     }
@@ -250,7 +287,105 @@ impl Renderer {
             background: [0.0, 0.0, 0.0, 1.0],
             glyph_generation: self.glyph_generation,
             rebuild_all: true,
+            fill: true,
+            inset: (0.0, 0.0),
+            shapes: vec![],
         }
+    }
+
+    /// A view for [`Renderer::update_overlay`]: shapes and text, no background fill.
+    pub fn new_overlay(&self) -> PaneView {
+        let mut view = self.new_view();
+        view.fill = false;
+        view
+    }
+
+    /// Opacity of the panes' default background (1 is opaque). Cells with their own
+    /// background, the selection and the cursor stay opaque. Views rebuild on their next update.
+    pub fn set_background_alpha(&mut self, alpha: f32) {
+        let alpha = alpha.clamp(0.0, 1.0);
+        if alpha != self.background_alpha {
+            self.background_alpha = alpha;
+            self.glyph_generation += 1;
+        }
+    }
+
+    /// Opacity of the colour `draw` clears to, for a window the desktop shows through.
+    pub fn set_clear_alpha(&mut self, alpha: f32) {
+        self.clear_alpha = alpha.clamp(0.0, 1.0);
+    }
+
+    /// Advance width of a line of text, for laying out shapes.
+    pub fn text_width(&mut self, text: &str, size_px: f32, bold: bool, ui: bool) -> f32 {
+        loop {
+            match self.glyphs.line(text, size_px, bold, ui) {
+                Ok((_, w)) => return w,
+                Err(AtlasFull) => {
+                    self.glyphs.reset();
+                    self.glyph_generation += 1;
+                    self.stats.atlas_evictions += 1;
+                }
+            }
+        }
+    }
+
+    /// The interface font family in use for `ui` text.
+    pub fn ui_family(&self) -> &str {
+        self.glyphs.ui_family()
+    }
+
+    /// Brings an overlay view up to date with `shapes`. False when nothing changed, so an idle
+    /// window still draws nothing. Overlay text shares the glyph atlas, so it rebuilds after
+    /// an eviction or font change too.
+    pub fn update_overlay(&mut self, view: &mut PaneView, shapes: &[Shape]) -> bool {
+        if view.glyph_generation == self.glyph_generation && !view.rebuild_all && view.shapes == shapes {
+            return false;
+        }
+        self.glyphs.draw_what_fits = false;
+        let mut out = vec![];
+        loop {
+            out.clear();
+            match self.build_shapes(shapes, &mut out) {
+                Ok(()) => break,
+                Err(AtlasFull) => {
+                    // A second failure after a reset draws what fits rather than looping.
+                    self.glyphs.draw_what_fits = true;
+                    self.glyphs.reset();
+                    self.glyph_generation += 1;
+                    self.stats.atlas_evictions += 1;
+                }
+            }
+        }
+        view.rows.clear();
+        view.rows.push(RowInstances { back: out, front: vec![] });
+        view.cursor.clear();
+        view.shapes = shapes.to_vec();
+        view.glyph_generation = self.glyph_generation;
+        view.rebuild_all = false;
+        self.flush_glyphs();
+        self.upload_instances(view);
+        true
+    }
+
+    fn build_shapes(&mut self, shapes: &[Shape], out: &mut Vec<Instance>) -> Result<(), AtlasFull> {
+        for shape in shapes {
+            match shape {
+                Shape::Rect { x, y, w, h, radius, color } => {
+                    out.push(Instance { pos: [*x, *y], size: [*w, *h], uv: [*radius, 0.0, 0.0, 0.0], color: *color, kind: KIND_ROUNDED });
+                }
+                Shape::Ring { x, y, w, h, radius, width, color } => {
+                    out.push(Instance { pos: [*x, *y], size: [*w, *h], uv: [*radius, width.max(0.01), 0.0, 0.0], color: *color, kind: KIND_ROUNDED });
+                }
+                Shape::Text { x, y, text, size_px, bold, ui, color } => {
+                    let (glyphs, _) = self.glyphs.line(text, *size_px, *bold, *ui)?;
+                    let (left, top) = (x.round(), y.round());
+                    for g in glyphs {
+                        out.push(glyph_instance(g, left, top, *color));
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Changes the font size (zoom, DPI). Views rebuild on their next `update`; cell metrics
@@ -258,6 +393,28 @@ impl Renderer {
     pub fn set_font_size(&mut self, size_px: f32) {
         self.glyphs.set_size(size_px);
         self.glyph_generation += 1;
+    }
+
+    /// Changes the terminal font family and line height at `size_px`. False if the family is
+    /// not loaded and the bundled one is used instead. Views rebuild as for a size change.
+    pub fn set_font(&mut self, family: Option<&str>, line_height: f32, size_px: f32) -> bool {
+        let found = self.glyphs.set_family(family, line_height, size_px);
+        self.glyph_generation += 1;
+        found
+    }
+
+    /// The family actually in use.
+    pub fn font_family(&self) -> &str {
+        self.glyphs.family()
+    }
+
+    /// Makes the families in a font file available to [`Renderer::set_font`].
+    pub fn add_font(&mut self, data: Vec<u8>) {
+        self.glyphs.add_font(data);
+    }
+
+    pub fn monospace_families(&self) -> Vec<String> {
+        self.glyphs.monospace_families()
     }
 
     pub fn device(&self) -> &wgpu::Device {
@@ -312,7 +469,7 @@ impl Renderer {
         let changed = full || any_dirty || stale || !bytes_eq(&cursor, &view.cursor);
         view.rebuild_all = false;
         view.cursor = cursor;
-        view.background = rgba(frame.background, 1.0);
+        view.background = rgba(frame.background, self.background_alpha);
         self.flush_glyphs();
         if changed {
             self.upload_instances(view);
@@ -342,7 +499,10 @@ impl Renderer {
         view.scratch.clear();
         // Fills the pane, including any pixels left over below or beside the last cell; the
         // draw's scissor rectangle clips it to the pane.
-        view.scratch.push(solid(0.0, 0.0, 65536.0, 65536.0, view.background));
+        // Starts left of and above the origin to cover the padding too.
+        if view.fill {
+            view.scratch.push(solid(-1024.0, -1024.0, 65536.0, 65536.0, view.background));
+        }
         for r in &view.rows {
             view.scratch.extend_from_slice(&r.back);
         }
@@ -448,10 +608,12 @@ impl Renderer {
     pub fn draw(&mut self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, viewport: (u32, u32), clear: Rgb, panes: &[(&PaneView, PaneRect)]) {
         for (view, rect) in panes {
             // Offset through the projection: x and y in a pane's own pixels stay valid.
-            let globals = [viewport.0 as f32, viewport.1 as f32, rect.x as f32, rect.y as f32];
+            let globals = [viewport.0 as f32, viewport.1 as f32, rect.x as f32 + view.inset.0, rect.y as f32 + view.inset.1];
             self.queue.write_buffer(&view.globals, 0, bytemuck::cast_slice(&globals));
         }
-        let c = rgba(clear, 1.0);
+        // The clear colour skips the shader, so it is premultiplied here.
+        let a = self.clear_alpha;
+        let c = [clear.r as f32 / 255.0 * a, clear.g as f32 / 255.0 * a, clear.b as f32 / 255.0 * a, a];
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("glyphium"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -459,7 +621,7 @@ impl Renderer {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color { r: c[0] as f64, g: c[1] as f64, b: c[2] as f64, a: 1.0 }),
+                    load: wgpu::LoadOp::Clear(wgpu::Color { r: c[0] as f64, g: c[1] as f64, b: c[2] as f64, a: c[3] as f64 }),
                     store: wgpu::StoreOp::Store,
                 },
             })],

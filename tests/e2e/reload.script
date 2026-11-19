@@ -1,0 +1,32 @@
+# Settings and theme files edited while the app runs apply on the next reload (focusing the
+# window does the same), without a restart.
+wait 800
+type PS1='$ '\r
+wait 200
+type printf '\033[34mblue\033[0m'; echo\r
+wait 300
+appearance dark
+expect-theme glass-dark
+write-config theme dracula
+reload-config
+wait 300
+expect-theme dracula
+expect-config theme dracula
+screenshot reload-dracula.png
+# A user theme file in Ghostty's format shows up by name.
+write-theme night-owl background = #011627\nforeground = #d6deeb\npalette = 4=#82aaff\n
+write-config theme night-owl
+reload-config
+wait 300
+expect-theme night-owl
+screenshot reload-user-theme.png
+# A bad line keeps the default for that key and shows a warning; the rest still applies.
+write-config font_size huge
+write-config cursor_style bar
+reload-config
+wait 300
+type echo still-$((2+2))\r
+wait 300
+expect-screen still-4
+screenshot reload-warning.png
+quit

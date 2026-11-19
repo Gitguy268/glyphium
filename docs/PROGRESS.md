@@ -124,3 +124,27 @@ Stopped at 3.0 GB free (limit 5 GB; several sessions share this disk). Nothing h
 - Dependabot PRs #1–#3 merged; #4 (checkout v7) needed a rebase.
 - Verified: unit tests, fuzz and GPU tests, clippy, all 11 e2e scripts exit 0; screenshots read for the queue bar, the prompt and the Nujabes theme.
 - Not tested: real key presses for the new shortcuts (scripts enter past the OS event), IME commit into the prompt, Linux and Windows. Under heavy load (load average 12) one launch took longer than 12 s to start; it passed when the load dropped.
+
+## 2026-11-10: glass chrome, Settings panel, theme files, menu bar
+
+The user asked for easier theme changes, more settings, an easier way to reach the queue, and a look like the current macOS Terminal. Branch `glass-settings`. They chose: glass tab pills drawn in a transparent title bar (not native NSWindow tabs), a native menu bar, a Settings panel, live reload, theme files, an always-visible Queue button, Glass Dark/Light, `auto` appearance, and a classic set of palettes.
+
+- **Themes** (`terminal-core/src/theme.rs`): 10 built-ins in one table. `Theme::parse` reads Ghostty theme files. `Theme.opacity` is the theme's suggested window opacity. Tests check contrast: Catppuccin Latte's published cursor is 2.3:1 and Solarized Light's text is 4.1:1, so the thresholds are 2.2 and 4.0.
+- **Config** (`apps/desktop/src/config.rs`, `themes.rs`): 20 keys, colour overrides, theme files in `themes/`, and `theme = auto` with `theme_light`/`theme_dark`. `write_key` changes one line in place and keeps comments. A missing file starts from `TEMPLATE`. The config file and the theme folder reload when the window gains focus (mtime check, no polling).
+- **Menu bar** (`menu.rs`, muda 0.21, macOS only): built in `resumed`, and the event loop uses `with_default_menu(false)`. Menu ids are `action:NAME` and `theme:NAME`, and scripts send the same ids. Menu and key events share `dispatch()`, with a 150 ms guard against one press arriving twice. winit's view has no `performKeyEquivalent`, so on macOS the menu gets Cmd keys first.
+- **Renderer**: shader kind 3 is an anti-aliased rounded rectangle, filled or as a ring. Overlay views draw `Shape` lists: UI text in the system font (`.SF NS` found through fontdb) or the terminal font. Unchanged shapes do no work, and a glyph-generation change (eviction, zoom) rebuilds them. Also: background alpha, a premultiplied clear alpha, a per-view inset, and font family and line height. Native and WebGPU still differ in 0 of 384,000 pixels.
+- **Chrome** (`chrome.rs`, pure layout with unit tests):
+  - Title row: title and grid size, `+`, and a Queue pill with a count badge.
+  - A second row of tab pills when there are 2+ tabs: close on hover, ⌘N hints.
+  - The queue popover lists the waiting commands; notices and the paste question are toasts.
+  - Panes get padding and hairline dividers.
+  - When the window is translucent, the clear colour is transparent. Otherwise the clear colour and the pane fill stacked, and 0.8 became 0.96.
+- **Settings panel** (`settings.rs`, a pure state machine): 11 rows with live preview. Done writes only the changed keys; Cancel restores everything.
+- **macOS window**: transparent title bar, full-size content view, hidden title, `with_transparent`, `with_blur`. Metal offers `PostMultiplied`, which sets the layer non-opaque; the shader already writes premultiplied colour.
+- **e2e**: 16 scripts, all exit 0. Each gets its own `GLYPHIUM_CONFIG_DIR`. New scripts: `reload`, `appearance`, `menu`, `chrome`, `settings`. New steps: `menu`, `click-chrome`, `expect-prompt`, `open-settings`, `settings-key`, `appearance`, `reload-config`, `write-config`, `write-theme`, `expect-config`, `expect-theme`. `idle.script` still sees 0 draws with the chrome on screen.
+- **Verified**: unit tests for core, render (15 GPU), session-host and the desktop app (46); `FUZZ_SEEDS=200`; clippy `-D warnings` on the four CI packages; the native/web pixel check. Screenshots were read by eye, composited over a sample wallpaper because the captures carry alpha.
+- **Not tested**:
+  - Real OS input. Synthetic clicks and keys need Accessibility permission, and a real window capture needs Screen Recording; this terminal has neither. So these are untested: clicks in the native title bar strip (AppKit could take them for window drags), menu shortcuts in place of the key path, the real blur behind the window, and the menu bar's look.
+  - Linux and Windows (no menu bar there; chrome opaque).
+  - IME into the Settings panel.
+- **Demo commands ran for real.** While taking README shots, two demo commands (`npm run build`, `git push`) queued during a `sleep` ran in `$HOME` and failed harmlessly. The demo scripts now use a scratch `HOME` and clear the queue before it can run.
