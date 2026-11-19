@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Glyphium
+GenericName=Terminal
+Comment=GPU-rendered terminal emulator
+Exec=glyphium
+Icon=io.github.gitguy268.glyphium
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=terminal;shell;console;command;
+StartupWMClass=glyphium

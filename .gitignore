@@ -10,3 +10,10 @@ fixtures/generated/
 .env
 .env.*
 !.env.example
+
+# Flatpak build output (packaging/flatpak)
+packaging/flatpak/glyphium-linux-x86_64
+packaging/flatpak/build/
+packaging/flatpak/repo/
+packaging/flatpak/.flatpak-builder/
+*.flatpak

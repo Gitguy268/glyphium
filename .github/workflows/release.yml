@@ -1,0 +1,128 @@
+name: Release
+
+# Builds Glyphium.app (for the Homebrew cask), the Linux binary and the self-hosted Flatpak.
+# Pull requests build all three as a check; a v* tag also attaches them to the GitHub Release.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: [apps/**, crates/**, Cargo.lock, packaging/**, scripts/**, .github/workflows/release.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GHOSTTY_COMMIT: cec8b92f1ecd176a20a56aa405021e7ae991b996
+  ZIG_VERSION: 0.17.0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    name: macOS app (arm64)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: libclang for bindgen
+        run: echo "LIBCLANG_PATH=$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib" >> "$GITHUB_ENV"
+      - uses: mlugg/setup-zig@v2.2.1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Build libghostty-vt
+        run: |
+          git init -q .tools/ghostty
+          git -C .tools/ghostty fetch -q --depth 1 https://github.com/ghostty-org/ghostty.git "$GHOSTTY_COMMIT"
+          git -C .tools/ghostty checkout -q FETCH_HEAD
+          (cd .tools/ghostty && zig build -Demit-lib-vt -Doptimize=ReleaseFast)
+      - run: cargo build --release --locked -p glyphium
+      - name: Bundle and zip Glyphium.app
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' apps/desktop/Cargo.toml | head -n 1)
+          scripts/bundle-macos.sh dist
+          ditto -c -k --sequesterRsrc --keepParent dist/Glyphium.app "dist/Glyphium-$version-macos-arm64.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: dist/Glyphium-*-macos-arm64.zip
+          if-no-files-found: error
+
+  linux:
+    name: Linux binary (x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev pkg-config libxkbcommon-dev libwayland-dev libx11-dev \
+            libxcursor-dev libxrandr-dev libxi-dev libvulkan-dev
+      - uses: mlugg/setup-zig@v2.2.1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Build libghostty-vt
+        run: |
+          git init -q .tools/ghostty
+          git -C .tools/ghostty fetch -q --depth 1 https://github.com/ghostty-org/ghostty.git "$GHOSTTY_COMMIT"
+          git -C .tools/ghostty checkout -q FETCH_HEAD
+          (cd .tools/ghostty && zig build -Demit-lib-vt -Doptimize=ReleaseFast)
+      - run: cargo build --release --locked -p glyphium
+      - run: ./target/release/glyphium --version
+      - run: cp target/release/glyphium glyphium-linux-x86_64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-binary
+          path: glyphium-linux-x86_64
+          if-no-files-found: error
+
+  flatpak:
+    name: Flatpak (x86_64)
+    needs: linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-binary
+          path: packaging/flatpak
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: packaging/flatpak/io.github.gitguy268.glyphium.yml
+          bundle: io.github.gitguy268.glyphium.flatpak
+          artifact-name: flatpak
+          cache: false
+      - run: appstreamcli validate --no-net --explain packaging/flatpak/io.github.gitguy268.glyphium.metainfo.xml
+
+  release:
+    name: Attach to the GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, linux, flatpak]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          (cd out && sha256sum * > SHA256SUMS && cat SHA256SUMS)
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber -R "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" out/* -R "$GITHUB_REPOSITORY" --verify-tag --title "Glyphium ${TAG#v}" \
+              --notes "macOS app: \`brew trust gitguy268/tap && brew install --cask gitguy268/tap/glyphium-app\`. Linux: \`flatpak install --user ./io.github.gitguy268.glyphium.flatpak\`."
+          fi
