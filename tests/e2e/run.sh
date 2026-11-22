@@ -13,7 +13,21 @@ for n in "${names[@]}"; do
   # A hung app must fail the run rather than hang it, so each script gets a time limit.
   # Each script gets its own empty settings folder, never the user's ~/.config/glyphium.
   cfg="$out/config-$n"; rm -rf "$cfg"; mkdir -p "$cfg"
-  GLYPHIUM_CONFIG_DIR="$cfg" "$bin" --config "$cfg/config.toml" --script "$here/$n.script" -e /bin/bash --norc --noprofile &
+  # Header lines choose the shell (`# shell: zsh` runs zsh with the settings folder as HOME) and
+  # stand in for the assistant's model (`# assist-stub: REPLY`).
+  shell=$(sed -n 's/^# shell: //p' "$here/$n.script" | head -1)
+  stub=$(sed -n 's/^# assist-stub: //p' "$here/$n.script" | head -1)
+  # env takes its -u options before any NAME=VALUE.
+  unset_vars=(-u GLYPHIUM_ASSIST_STUB); set_vars=(GLYPHIUM_CONFIG_DIR="$cfg")
+  [ -n "$stub" ] && unset_vars=() && set_vars+=(GLYPHIUM_ASSIST_STUB="$stub")
+  if [ "$shell" = zsh ]; then
+    : > "$cfg/.zshrc"  # an empty one, so zsh doesn't start its new-user wizard
+    unset_vars+=(-u ZDOTDIR); set_vars+=(HOME="$cfg")
+    cmd=(/bin/zsh)
+  else
+    cmd=(/bin/bash --norc --noprofile)
+  fi
+  env "${unset_vars[@]}" "${set_vars[@]}" "$bin" --config "$cfg/config.toml" --script "$here/$n.script" -e "${cmd[@]}" &
   pid=$!
   ( sleep 90; kill -9 $pid 2>/dev/null ) & watchdog=$!
   wait $pid; rc=$?

@@ -4,6 +4,8 @@
 //! batches, and the screen is drawn at most once per display refresh and only if something
 //! changed. Panes in hidden tabs keep parsing but draw nothing.
 
+mod assist;
+mod assist_model;
 mod chrome;
 mod config;
 mod layout;
@@ -12,6 +14,7 @@ mod menu;
 mod queue;
 mod script;
 mod settings;
+mod shell_integration;
 mod themes;
 
 use std::collections::HashMap;
@@ -58,6 +61,8 @@ struct Pane {
     scroll_accum: f32,
     /// Commands to type once the shell is back at its prompt.
     queue: CommandQueue,
+    /// Finds the shell's "command not found" reports in the output.
+    osc: assist::OscScanner,
 }
 
 /// What a key or click does in the Settings panel.
@@ -85,10 +90,36 @@ pub enum PromptInput {
     ClearQueue,
 }
 
-/// The "Queue next:" line in the top bar, for the pane it was opened in.
+/// The "Queue next:" line in the top bar, for the pane it was opened in. With `ask` set it is
+/// the assistant instead: `text` is the request, then the command to confirm.
 struct Prompt {
     pane: PaneId,
     text: String,
+    ask: Option<Ask>,
+}
+
+impl Prompt {
+    fn queue(pane: PaneId) -> Self {
+        Self { pane, text: String::new(), ask: None }
+    }
+}
+
+/// The assistant's step. `id` matches answers to the question they belong to.
+struct Ask {
+    step: AskStep,
+    id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum AskStep {
+    Typing,
+    Thinking,
+    /// `text` is a command to run; the note says where it came from or what it does.
+    Confirm(String),
+    /// The model is needed but not downloaded; the request waits here.
+    Offer(String),
+    Downloading(f32, String),
+    Message(String),
 }
 
 struct Tab {
@@ -135,6 +166,8 @@ enum Action {
     OpenConfig,
     OpenThemes,
     ReloadConfig,
+    Ask,
+    Cheatsheet,
     Quit,
 }
 
@@ -143,6 +176,7 @@ enum Action {
 pub enum UserEvent {
     Wake,
     Menu(String),
+    Assist(assist_model::Event),
 }
 
 /// Menu item ids (`action:ID`) and what they do. Scripts send the same ids.
@@ -156,6 +190,8 @@ const MENU_ACTIONS: &[(&str, Action)] = &[
     ("split-right", Action::SplitRight),
     ("split-down", Action::SplitDown),
     ("queue", Action::QueueCommand),
+    ("ask", Action::Ask),
+    ("cheatsheet", Action::Cheatsheet),
     ("clear-queue", Action::ClearQueue),
     ("close", Action::ClosePane),
     ("copy", Action::Copy),
@@ -239,6 +275,13 @@ struct App {
     script_at: Instant,
     report: Option<script::Report>,
     exit_code: i32,
+    assistant: assist_model::Assistant,
+    /// Numbers questions to the model, so a late answer to a closed popover is dropped.
+    ask_seq: u64,
+    system: assist::System,
+    /// Where the shell hook files were written, if they could be.
+    shell_dir: Option<PathBuf>,
+    cheatsheet: bool,
 }
 
 fn pixel_rect(r: Rect) -> PaneRect {
@@ -255,7 +298,19 @@ impl App {
             eprintln!("glyphium: {w}");
         }
         let config_stamp = config_stamp(config_path.as_deref());
+        let assistant = {
+            let proxy = std::sync::Mutex::new(proxy.clone());
+            assist_model::Assistant::new(move |e| {
+                let _ = proxy.lock().map(|p| p.send_event(UserEvent::Assist(e)));
+            })
+        };
+        let shell_dir = config::dir().and_then(|d| shell_integration::install(&d.join("shell")));
         Self {
+            assistant,
+            ask_seq: 0,
+            system: assist::System::detect(),
+            shell_dir,
+            cheatsheet: false,
             proxy,
             wake_pending: Arc::new(AtomicBool::new(false)),
             window: None,
@@ -392,7 +447,7 @@ impl App {
         };
         // The real size comes from the next layout pass, before any shell output is drawn.
         let dims = Dimensions { cols: 80, rows: 24, pixel_width: 0, pixel_height: 0 };
-        let (session, events) = Session::open(&self.profile, dims, id, wake).expect("start shell");
+        let (session, events) = Session::open(&self.session_profile(), dims, id, wake).expect("start shell");
         let mut term = Terminal::new(dims.cols, dims.rows, self.config.scrollback);
         term.set_theme(self.themes.resolve(&self.config, &self.theme, self.dark_appearance).0.as_ref());
         if let Some(seq) = self.config.cursor_sequence() {
@@ -410,10 +465,30 @@ impl App {
             exited: false,
             scroll_accum: 0.0,
             queue: CommandQueue::default(),
+            osc: assist::OscScanner::default(),
         };
         self.panes.insert(id, pane);
         self.layout_dirty = true;
         id
+    }
+
+    /// What a new pane runs: the command line's program, else the Settings shell, else the
+    /// login shell; with the environment that loads the assistant's hook into zsh or fish.
+    fn session_profile(&self) -> Profile {
+        let mut p = self.profile.clone();
+        if p.command.is_none()
+            && let Some(sh) = self.config.shell.as_deref().and_then(shell_integration::resolve)
+        {
+            p.command = Some(sh);
+            p.args = vec!["-l".into()];
+        }
+        if self.config.assist_hook
+            && let Some(dir) = &self.shell_dir
+        {
+            let program = p.command.clone().or_else(|| std::env::var("SHELL").ok()).unwrap_or_default();
+            shell_integration::apply(&mut p, &program, dir, &|k| std::env::var(k).ok());
+        }
+        p
     }
 
     fn new_tab(&mut self) {
@@ -524,6 +599,7 @@ impl App {
         let mut changed = false;
         let mut more = false;
         let mut ended = vec![];
+        let mut hooks = vec![];
         for (&id, pane) in self.panes.iter_mut() {
             let mut budget = DRAIN_BUDGET;
             loop {
@@ -531,6 +607,7 @@ impl App {
                     Ok(SessionEvent::Output { generation, bytes }) if generation == id => {
                         budget = budget.saturating_sub(bytes.len());
                         pane.queue.saw_output(Instant::now());
+                        hooks.extend(pane.osc.feed(&bytes).into_iter().map(|line| (id, line)));
                         pane.term.write(&bytes);
                         pane.session.write(pane.term.take_replies());
                         changed |= visible.contains(&id);
@@ -551,6 +628,10 @@ impl App {
         }
         for id in ended {
             self.close_pane(id);
+        }
+        for (id, line) in hooks {
+            self.hook_reported(id, line);
+            changed = true;
         }
         changed |= self.poll_queues();
         if more {
@@ -586,6 +667,7 @@ impl App {
             text: p.text.clone(),
             waiting: self.panes.get(&p.pane).map(|pane| pane.queue.items().map(str::to_string).collect()).unwrap_or_default(),
             unsupported: !self.queue_supported,
+            ask: p.ask.as_ref().map(|a| self.ask_info(&a.step, &p.text)),
         });
         let area = self.content_area();
         let dividers = tab
@@ -630,6 +712,7 @@ impl App {
             accent,
             opacity: self.effective_opacity(),
             dividers,
+            cheatsheet: self.cheatsheet.then(|| assist::cheatsheet().into_iter().map(|(t, rows)| (t.to_string(), rows.into_iter().map(|(k, w)| (k, w.to_string())).collect())).collect()),
         };
         let renderer = &mut self.gpu.as_mut().unwrap().renderer;
         let mut c = chrome::layout(&input, &mut |t, size, bold| renderer.text_width(t, size, bold, true));
@@ -666,7 +749,7 @@ impl App {
                 } else if let Some(id) = self.tabs.get(self.active).map(|t| t.focused) {
                     self.clear_banner();
                     self.preedit.clear();
-                    self.prompt = Some(Prompt { pane: id, text: String::new() });
+                    self.prompt = Some(Prompt::queue(id));
                 }
             }
             Hit::Popover | Hit::Scrim => {}
@@ -675,6 +758,7 @@ impl App {
             Hit::SettingNext(i) => self.settings_input(SettingsInput::Step(i, 1)),
             Hit::SettingsDone => self.settings_input(SettingsInput::Done),
             Hit::SettingsCancel => self.settings_input(SettingsInput::Cancel),
+            Hit::CloseCheatsheet => self.cheatsheet = false,
             Hit::Empty => {
                 let now = Instant::now();
                 if self.last_bar_click.is_some_and(|t| now - t < DOUBLE_CLICK) {
@@ -835,7 +919,8 @@ impl App {
         }
         // Where opacity steps from when the config has none: the theme's suggestion.
         let base = self.themes.resolve(&config::Config { opacity: None, ..self.config.clone() }, &self.theme, self.dark_appearance).1;
-        self.settings = Some(settings::Settings::new(&self.config, &self.theme, &self.themes.names(), fonts, base));
+        let shells = ["zsh", "bash", "fish"].into_iter().filter(|s| shell_integration::resolve(s).is_some()).map(String::from);
+        self.settings = Some(settings::Settings::new(&self.config, &self.theme, &self.themes.names(), fonts, base).with_shells(shells));
         self.request_redraw();
     }
 
@@ -936,6 +1021,9 @@ impl App {
 
     fn prompt_input(&mut self, input: PromptInput) {
         let Some(p) = &mut self.prompt else { return };
+        if p.ask.is_some() {
+            return self.ask_input(input);
+        }
         match input {
             PromptInput::Text(text) => p.text.extend(text.chars().filter(|c| !c.is_control())),
             // One line: a pasted newline must not become a second command or an early Enter.
@@ -960,6 +1048,252 @@ impl App {
             }
         }
         self.request_redraw();
+    }
+
+    fn model(&self) -> &'static assist::ModelInfo {
+        assist::model(&self.config.assist_model)
+    }
+
+    /// The assistant shows `answer` for pane `pane`: a command to confirm, or a message.
+    fn show_answer(&mut self, pane: PaneId, answer: assist::Answer) {
+        let (text, step) = match answer {
+            assist::Answer::Command { cmd, note } => (cmd, AskStep::Confirm(note)),
+            assist::Answer::No(why) => (self.prompt.as_ref().map(|p| p.text.clone()).unwrap_or_default(), AskStep::Message(why)),
+        };
+        self.prompt = Some(Prompt { pane, text, ask: Some(Ask { step, id: 0 }) });
+        self.request_redraw();
+    }
+
+    /// Answers the request in the popover: a recipe or typo fix at once, else the model, after
+    /// offering the download the first time.
+    fn suggest(&mut self) {
+        let Some(p) = &self.prompt else { return };
+        let (pane, text) = (p.pane, p.text.trim().to_string());
+        if text.is_empty() {
+            return;
+        }
+        if let Some(a) = assist::quick_answer(&text, self.system, &shell_integration::on_path) {
+            return self.show_answer(pane, a);
+        }
+        let model = self.model();
+        let step = if self.assistant.ready(model) {
+            self.ask_seq += 1;
+            let shell = self.session_profile().command.or_else(|| std::env::var("SHELL").ok()).unwrap_or_default();
+            let shell = shell_integration::shell_name(&shell).to_string();
+            self.assistant.ask(self.ask_seq, model, assist::messages(&text, self.system, &shell));
+            AskStep::Thinking
+        } else if self.assistant.downloading() {
+            AskStep::Downloading(0.0, text.clone())
+        } else {
+            AskStep::Offer(text.clone())
+        };
+        let id = self.ask_seq;
+        if let Some(p) = &mut self.prompt {
+            p.ask = Some(Ask { step, id });
+        }
+        self.request_redraw();
+    }
+
+    /// A key in the assistant popover.
+    fn ask_input(&mut self, input: PromptInput) {
+        let Some(p) = &mut self.prompt else { return };
+        let Some(ask) = &mut p.ask else { return };
+        let editable = !matches!(ask.step, AskStep::Thinking | AskStep::Downloading(..));
+        let edit = |p: &mut Prompt| {
+            // Editing a request starts over; editing a command keeps it a command to confirm.
+            if let Some(a) = &mut p.ask
+                && !matches!(a.step, AskStep::Confirm(_))
+            {
+                a.step = AskStep::Typing;
+            }
+        };
+        match input {
+            PromptInput::Text(text) if editable => {
+                p.text.extend(text.chars().filter(|c| !c.is_control()));
+                edit(p);
+            }
+            PromptInput::Paste(text) if editable => {
+                p.text.extend(text.chars().map(|c| if matches!(c, '\n' | '\r' | '\t') { ' ' } else { c }).filter(|c| !c.is_control()));
+                edit(p);
+            }
+            PromptInput::Backspace if editable => {
+                p.text.pop();
+                edit(p);
+            }
+            PromptInput::Escape => self.prompt = None,
+            PromptInput::Enter => match ask.step.clone() {
+                AskStep::Typing | AskStep::Message(_) => self.suggest(),
+                AskStep::Confirm(_) => {
+                    let p = self.prompt.take().unwrap();
+                    self.queue_command(p.pane, &p.text);
+                }
+                AskStep::Offer(request) => {
+                    ask.step = AskStep::Downloading(0.0, request);
+                    let model = self.model();
+                    self.assistant.download(model);
+                }
+                AskStep::Thinking | AskStep::Downloading(..) => {}
+            },
+            _ => {}
+        }
+        self.request_redraw();
+    }
+
+    /// The shell reported a command it couldn't find in pane `pane`.
+    fn hook_reported(&mut self, pane: PaneId, line: String) {
+        let focused = self.tabs.get(self.active).map(|t| t.focused) == Some(pane);
+        if !self.config.assist_hook || !focused || self.prompt.is_some() || self.settings.is_some() || self.cheatsheet {
+            return;
+        }
+        if let Some(a) = assist::quick_answer(&line, self.system, &shell_integration::on_path) {
+            return self.show_answer(pane, a);
+        }
+        if self.assistant.ready(self.model()) {
+            self.prompt = Some(Prompt { pane, text: line, ask: Some(Ask { step: AskStep::Typing, id: 0 }) });
+            self.suggest();
+        } else {
+            let key = if cfg!(target_os = "macos") { "⌘K" } else { "Ctrl+Shift+K" };
+            self.show_notice(format!("{} not found · {key} asks the assistant", line.split_whitespace().next().unwrap_or("Command")));
+        }
+    }
+
+    /// News from the model thread or the download.
+    fn assist_event(&mut self, event: assist_model::Event) {
+        use assist_model::Event;
+        match event {
+            Event::Answer { id, reply } => {
+                let Some(p) = &self.prompt else { return };
+                if p.ask.as_ref().is_none_or(|a| a.id != id || a.step != AskStep::Thinking) {
+                    return;
+                }
+                let pane = p.pane;
+                match reply.map(|r| assist::parse_reply(&r)) {
+                    Ok(Some(a)) => self.show_answer(pane, a),
+                    Ok(None) => self.set_ask_step(AskStep::Message("No suggestion for that. Try saying it another way.".into())),
+                    Err(e) => self.set_ask_step(AskStep::Message(format!("The model couldn't run: {e}"))),
+                }
+            }
+            Event::Progress(f) => {
+                if let Some(Ask { step: AskStep::Downloading(p, _), .. }) = self.prompt.as_mut().and_then(|p| p.ask.as_mut()) {
+                    *p = f;
+                    self.request_redraw();
+                }
+            }
+            Event::Downloaded => {
+                self.assistant.download_finished();
+                let waiting = match self.prompt.as_ref().and_then(|p| p.ask.as_ref()).map(|a| &a.step) {
+                    Some(AskStep::Downloading(_, request)) => Some(request.clone()),
+                    _ => None,
+                };
+                match waiting {
+                    Some(request) => {
+                        if let Some(p) = &mut self.prompt {
+                            p.text = request;
+                        }
+                        self.suggest();
+                    }
+                    None => self.show_notice("The assistant's model is ready".into()),
+                }
+            }
+            Event::DownloadFailed(e) => {
+                self.assistant.download_finished();
+                if matches!(self.prompt.as_ref().and_then(|p| p.ask.as_ref()).map(|a| &a.step), Some(AskStep::Downloading(..))) {
+                    self.set_ask_step(AskStep::Message(format!("The model didn't download: {e}")));
+                } else {
+                    self.show_notice(format!("The model didn't download: {e}"));
+                }
+            }
+        }
+    }
+
+    fn set_ask_step(&mut self, step: AskStep) {
+        if let Some(a) = self.prompt.as_mut().and_then(|p| p.ask.as_mut()) {
+            a.step = step;
+        }
+        self.request_redraw();
+    }
+
+    /// Extras menu: shows the install command for one tool, to confirm.
+    fn offer_extra(&mut self, name: &str) {
+        let Some(e) = assist::EXTRAS.iter().find(|e| e.name == name) else { return };
+        let Some(pane) = self.tabs.get(self.active).map(|t| t.focused) else { return };
+        self.settings = None;
+        self.cheatsheet = false;
+        match e.command(self.system) {
+            Some(cmd) => {
+                let mut note = e.note();
+                if self.system == assist::System::Mac && cmd.starts_with("brew ") && !shell_integration::on_path("brew") && shell_integration::resolve("brew").is_none() {
+                    note.push_str(" Needs Homebrew: ask the assistant to install brew first.");
+                }
+                self.show_answer(pane, assist::Answer::Command { cmd, note });
+            }
+            None => self.show_notice(format!("{} isn't packaged for {}", e.name, self.system.manager())),
+        }
+    }
+
+    /// What the popover shows for an assistant step.
+    fn ask_info(&self, step: &AskStep, text: &str) -> chrome::AskInfo {
+        let model = self.model();
+        let key = if cfg!(target_os = "macos") { "⌘K" } else { "Ctrl+Shift+K" };
+        let mut info = chrome::AskInfo {
+            heading: "Ask for a command".into(),
+            side: "plain English, or a command to fix".into(),
+            placeholder: "install python · find big files · gti stauts".into(),
+            notes: vec![],
+            warnings: vec![],
+            progress: None,
+            hints: format!("↩ Suggest    esc Close    {key} opens this"),
+        };
+        match step {
+            AskStep::Typing => {}
+            AskStep::Thinking => {
+                info.heading = "Thinking…".into();
+                info.side = model.label.into();
+                info.hints = "esc Cancel".into();
+            }
+            AskStep::Confirm(note) => {
+                info.heading = "Run this command?".into();
+                info.side = "you can edit it".into();
+                if !note.is_empty() {
+                    info.notes.push(note.clone());
+                }
+                if !self.queue_supported {
+                    info.notes.push("This pane runs a program, not a shell, so the command can't run here.".into());
+                }
+                info.warnings = assist::dangers(text).into_iter().map(String::from).collect();
+                info.hints = "↩ Run    esc Cancel".into();
+            }
+            AskStep::Offer(_) => {
+                info.heading = "The assistant needs its model".into();
+                info.side = String::new();
+                let home = std::env::var("HOME").unwrap_or_default();
+                let place = assist_model::models_dir().map_or_else(
+                    || "your settings folder".to_string(),
+                    |d| {
+                        let d = d.display().to_string();
+                        match d.strip_prefix(&home) {
+                            Some(rest) if !home.is_empty() => format!("~{rest}"),
+                            _ => d,
+                        }
+                    },
+                );
+                info.notes.push(format!(
+                    "{}, {} MB from Hugging Face ({}, Apache-2.0). It downloads once into {place} and runs on this computer: nothing you type is sent anywhere.",
+                    model.label,
+                    model.size / 1_000_000,
+                    model.repo
+                ));
+                info.hints = format!("↩ Download {} MB    esc Cancel", model.size / 1_000_000);
+            }
+            AskStep::Downloading(f, _) => {
+                info.heading = format!("Downloading the model… {}%", (f * 100.0).round());
+                info.side = model.label.into();
+                info.progress = Some(*f);
+                info.hints = "esc hides this; the download carries on".into();
+            }
+            AskStep::Message(m) => info.notes.push(m.clone()),
+        }
+        info
     }
 
     fn sync_title(&mut self) {
@@ -1143,6 +1477,8 @@ impl App {
             "Digit0" => Action::ZoomReset,
             "KeyQ" => Action::Quit,
             "Comma" => Action::Settings,
+            "KeyK" => Action::Ask,
+            "Slash" => Action::Cheatsheet,
             d if d.starts_with("Digit") => Action::SelectTab(d[5..].parse::<usize>().ok()?.checked_sub(1)?),
             _ => return None,
         })
@@ -1152,6 +1488,8 @@ impl App {
     fn menu_command(&mut self, id: &str, event_loop: &ActiveEventLoop) {
         if let Some(name) = id.strip_prefix("theme:") {
             self.set_theme(name.to_string());
+        } else if let Some(name) = id.strip_prefix("extra:") {
+            self.offer_extra(name);
         } else if let Some(&(_, action)) = id.strip_prefix("action:").and_then(|a| MENU_ACTIONS.iter().find(|(n, _)| *n == a)) {
             self.dispatch(action, true, event_loop);
         } else {
@@ -1169,6 +1507,13 @@ impl App {
             return;
         }
         *(if from_menu { &mut self.last_menu } else { &mut self.last_key }) = Some((action, now));
+        if self.cheatsheet {
+            self.cheatsheet = false;
+            self.request_redraw();
+            if action == Action::Cheatsheet {
+                return;
+            }
+        }
         if self.settings.is_some() {
             match action {
                 Action::Settings => self.close_settings(true),
@@ -1260,7 +1605,7 @@ impl App {
                 if let Some(id) = self.tabs.get(self.active).map(|t| t.focused) {
                     self.clear_banner();
                     self.preedit.clear();
-                    self.prompt = Some(Prompt { pane: id, text: String::new() });
+                    self.prompt = Some(Prompt::queue(id));
                     self.request_redraw();
                 }
             }
@@ -1283,6 +1628,19 @@ impl App {
                 }
             }
             Action::ReloadConfig => self.reload_config(true),
+            Action::Ask => {
+                if let Some(id) = self.tabs.get(self.active).map(|t| t.focused) {
+                    self.clear_banner();
+                    self.preedit.clear();
+                    self.prompt = Some(Prompt { pane: id, text: String::new(), ask: Some(Ask { step: AskStep::Typing, id: 0 }) });
+                    self.request_redraw();
+                }
+            }
+            Action::Cheatsheet => {
+                self.prompt = None;
+                self.cheatsheet = true;
+                self.request_redraw();
+            }
             Action::Quit => {
                 self.panes.clear();
                 self.tabs.clear();
@@ -1636,6 +1994,34 @@ impl App {
                     }
                 }
                 Step::OpenQueue => self.run_action(Action::QueueCommand, event_loop),
+                Step::OpenAsk => self.run_action(Action::Ask, event_loop),
+                Step::ExpectAsk(want) => {
+                    let got = self.prompt.as_ref().and_then(|p| p.ask.as_ref()).map_or("closed".to_string(), |a| match &a.step {
+                        AskStep::Typing => "typing".into(),
+                        AskStep::Thinking => "thinking".into(),
+                        AskStep::Confirm(_) => "confirm".into(),
+                        AskStep::Offer(_) => "offer".into(),
+                        AskStep::Downloading(..) => "downloading".into(),
+                        AskStep::Message(_) => "message".into(),
+                    });
+                    self.report.get_or_insert_with(Default::default).check(&format!("assistant step {want}"), got == want, &format!("got {got}"));
+                    if got != want {
+                        self.exit_code = 1;
+                    }
+                }
+                Step::ExpectPromptText(want) => {
+                    let got = self.prompt.as_ref().map(|p| p.text.clone()).unwrap_or_default();
+                    self.report.get_or_insert_with(Default::default).check(&format!("popover text {want:?}"), got == want, &format!("got {got:?}"));
+                    if got != want {
+                        self.exit_code = 1;
+                    }
+                }
+                Step::ExpectCheatsheet(open) => {
+                    self.report.get_or_insert_with(Default::default).check(&format!("cheatsheet {}", if open { "open" } else { "closed" }), self.cheatsheet == open, "");
+                    if self.cheatsheet != open {
+                        self.exit_code = 1;
+                    }
+                }
                 Step::Prompt(input) => self.prompt_input(input),
                 Step::Queue(text) => {
                     if let Some(id) = self.tabs.get(self.active).map(|t| t.focused) {
@@ -1865,10 +2251,12 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
-        if let UserEvent::Menu(id) = event {
-            self.menu_command(&id, event_loop);
-            return;
-        }
+        let event = match event {
+            UserEvent::Menu(id) => return self.menu_command(&id, event_loop),
+            UserEvent::Assist(e) => return self.assist_event(e),
+            other => other,
+        };
+        let _ = event;
         self.wake_pending.store(false, Ordering::SeqCst);
         if self.gpu.as_ref().is_some_and(|g| g.lost.load(Ordering::SeqCst)) {
             self.request_redraw();
@@ -1931,6 +2319,18 @@ impl ApplicationHandler<UserEvent> for App {
                     PhysicalKey::Code(c) => format!("{c:?}"),
                     PhysicalKey::Unidentified(_) => String::new(),
                 };
+                if self.cheatsheet {
+                    if event.state == ElementState::Pressed && !matches!(event.logical_key, Key::Named(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super | NamedKey::Meta)) {
+                        match self.shortcut(&code, self.mods) {
+                            Some(a) => self.dispatch(a, false, event_loop),
+                            None => {
+                                self.cheatsheet = false;
+                                self.request_redraw();
+                            }
+                        }
+                    }
+                    return;
+                }
                 if self.settings.is_some() {
                     if event.state == ElementState::Pressed {
                         match self.shortcut(&code, self.mods) {

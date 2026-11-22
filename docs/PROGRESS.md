@@ -148,3 +148,43 @@ The user asked for easier theme changes, more settings, an easier way to reach t
   - Linux and Windows (no menu bar there; chrome opaque).
   - IME into the Settings panel.
 - **Demo commands ran for real.** While taking README shots, two demo commands (`npm run build`, `git push`) queued during a `sleep` ran in `$HOME` and failed harmlessly. The demo scripts now use a scratch `HOME` and clear the queue before it can run.
+
+## 2026-11-22: command assistant, shells, Extras, cheatsheet
+
+The user asked for four projects to be folded in: zsh-users/zsh, 0nn0/terminal-mac-cheatsheet, k4m4/terminals-are-sexy and oh-my-fish. They also wanted a feature where a plain-English sentence or a broken command becomes a corrected command that runs after confirmation, possibly using a small System 1 model such as jaredpalmer/kev-0.8b. Glyphium stays MIT. Branch `assist-shells`.
+
+They chose: an Ask popover plus a command-not-found hook; a shell picker plus an install helper (Extras menu); TabShell-style recipes before the model.
+
+- **`assist.rs`** (pure, unit-tested):
+  - The same rules as TabShell's `src/assist-core.js`: recipes (install brew/omf/omz/Fisher/Extras per package manager, update, switch shell), Damerau typo fixes for commands and the subcommands of git/brew/apt/npm/docker/pip/cargo (left alone when the word is on `PATH`), the chat messages with four worked examples, the reply parser (placeholder `/path/to/dir` becomes `.`), danger warnings, and the OSC 7777 scanner (split chunks, BEL or ST).
+  - It also holds the Extras list (terminals-are-sexy picks), the model list (pinned HF revisions) and the cheatsheet.
+- **`assist_model.rs`**:
+  - Runs llama-cpp-2 0.1.161 (default-features off, feature `assist-model`, on by default) on one worker thread, CPU only (`n_gpu_layers 0`), with greedy decoding of at most 80 tokens. llama.cpp still starts its Metal backend on macOS and prints shader-compile lines to stderr.
+  - Downloads with `curl -fsSL --retry 3` into `models/*.part`, reports progress by file size, and checks the size before renaming.
+  - `GLYPHIUM_ASSIST_STUB=<reply>` replaces the model for tests.
+- **`shell_integration.rs`**: writes `shell/` in the settings folder at start-up.
+  - zsh: `ZDOTDIR=shell/zsh`, whose `.zshenv` restores the user's ZDOTDIR (or unsets it), sources their `.zshenv`, then defines `command_not_found_handler` if none exists.
+  - fish: `XDG_DATA_DIRS` gets `shell/fish-data` in front; a vendor_conf.d file restores it and wraps `fish_command_not_found`.
+  - bash: `glyphium.bash` to source by hand, since bash 3.2 has no hook.
+  - Only applied when the program is zsh or fish.
+- **UI**:
+  - `Prompt.ask` turns the queue popover into the assistant: Typing, Thinking, Confirm (editable, warnings in red), Offer (download), Downloading (progress bar), Message.
+  - Enter on Confirm goes through `queue_command`.
+  - Cmd+K and Shell › Ask…; Extras menu (`extra:NAME` ids); Help › Cheatsheet (Cmd+/, `chrome::cheatsheet_panel`, any key or click closes).
+  - Settings row **Shell for new tabs** (`shell` key); `session_profile()` builds each pane's command and environment.
+- **Config**: `shell`, `assist_hook`, `assist_model`.
+- **e2e**: `run.sh` reads `# shell: zsh` (zsh with HOME = the test's settings folder, empty `.zshrc`) and `# assist-stub:`. New scripts:
+  - `assist.script` (16 checks): hook typo fix and run, install brew, stubbed model plus edit plus run, Extras, cheatsheet.
+  - `assist-offer.script` (4 checks): download offer, recipe without a model.
+  - New steps: `open-ask`, `expect-ask STEP`, `expect-prompt-text`, `expect-cheatsheet`.
+- **Verified**:
+  - 69 unit tests (plus the ignored real-model test), including a real zsh run of the hook through `script(1)`.
+  - Clippy `-D warnings` with and without default features.
+  - All 18 e2e scripts exit 0.
+  - The ignored `real_model_answers` test with the downloaded nl2bash GGUF: `du -sh .`, `find . -type f -size +100M`, `pbcopy < file.txt`, 1.0 s for all three, including load.
+  - A manual real-window run downloaded the 531 MB model from Hugging Face through the Offer step and then answered `du -sh .`.
+- **Not tested**:
+  - Real key presses for Cmd+K and Cmd+/, and real menu clicks.
+  - fish inside Glyphium, since fish isn't installed on this Mac. The hook file itself was run in fish 4.2 (TabShell's Ubuntu image, with TabShell's own hook removed): it printed one OSC 7777 sequence, then fish's usual message, and put `XDG_DATA_DIRS` back.
+  - Linux, Windows and the Flatpak (which now has `--share=network` for the download).
+  - CI's first build of llama.cpp.
