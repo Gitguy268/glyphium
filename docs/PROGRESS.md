@@ -183,6 +183,7 @@ They chose: an Ask popover plus a command-not-found hook; a shell picker plus an
   - All 18 e2e scripts exit 0.
   - The ignored `real_model_answers` test with the downloaded nl2bash GGUF: `du -sh .`, `find . -type f -size +100M`, `pbcopy < file.txt`, 1.0 s for all three, including load.
   - A manual real-window run downloaded the 531 MB model from Hugging Face through the Offer step and then answered `du -sh .`.
+  - The user's real setup: no `-e`, the real `HOME` and `~/.zshrc`, and `SHELL` unset, as a Finder launch may be. ZDOTDIR came back empty and `gti stauts` opened `git status`. The shell comes from `session_host::default_shell()`, which tries `$SHELL` and then the passwd entry.
 - **Not tested**:
   - Real key presses for Cmd+K and Cmd+/, and real menu clicks.
   - fish inside Glyphium, since fish isn't installed on this Mac. The hook file itself was run in fish 4.2 (TabShell's Ubuntu image, with TabShell's own hook removed): it printed one OSC 7777 sequence, then fish's usual message, and put `XDG_DATA_DIRS` back.

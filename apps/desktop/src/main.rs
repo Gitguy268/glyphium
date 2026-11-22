@@ -485,7 +485,7 @@ impl App {
         if self.config.assist_hook
             && let Some(dir) = &self.shell_dir
         {
-            let program = p.command.clone().or_else(|| std::env::var("SHELL").ok()).unwrap_or_default();
+            let program = p.command.clone().unwrap_or_else(glyphium_session_host::default_shell);
             shell_integration::apply(&mut p, &program, dir, &|k| std::env::var(k).ok());
         }
         p
@@ -1078,7 +1078,7 @@ impl App {
         let model = self.model();
         let step = if self.assistant.ready(model) {
             self.ask_seq += 1;
-            let shell = self.session_profile().command.or_else(|| std::env::var("SHELL").ok()).unwrap_or_default();
+            let shell = self.session_profile().command.unwrap_or_else(glyphium_session_host::default_shell);
             let shell = shell_integration::shell_name(&shell).to_string();
             self.assistant.ask(self.ask_seq, model, assist::messages(&text, self.system, &shell));
             AskStep::Thinking
