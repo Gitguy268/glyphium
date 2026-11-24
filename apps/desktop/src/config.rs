@@ -55,6 +55,12 @@ pub struct Config {
     pub copy_on_select: bool,
     pub confirm_paste: bool,
     pub scrollback: usize,
+    /// Shell for new tabs, a name (`zsh`, `fish`) or a path; `None` is the login shell.
+    pub shell: Option<String>,
+    /// Offer a fix when zsh or fish can't find a command.
+    pub assist_hook: bool,
+    /// Which model the assistant downloads and runs (an id from `assist::MODELS`).
+    pub assist_model: String,
 }
 
 impl Default for Config {
@@ -78,6 +84,9 @@ impl Default for Config {
             copy_on_select: false,
             confirm_paste: true,
             scrollback: 10_000,
+            shell: None,
+            assist_hook: true,
+            assist_model: crate::assist::MODELS[0].id.into(),
         }
     }
 }
@@ -136,6 +145,11 @@ pub const TEMPLATE: &str = r##"# Glyphium settings. Edit and switch back to the 
 # copy_on_select = false
 # confirm_paste = true                # ask before a multi-line paste that may run commands
 # scrollback = 10000                  # lines per pane
+
+# Shell and assistant
+# shell = zsh                         # for new tabs: zsh, bash, fish or a path; unset is your login shell
+# assist_hook = true                  # when zsh or fish can't find a command, offer a fix
+# assist_model = nl2bash              # nl2bash, qwen-coder or k2-system1 (downloaded on first use)
 "##;
 
 /// The file to read: `--config`, then `GLYPHIUM_CONFIG`, then `config.toml` in [`dir`].
@@ -222,6 +236,12 @@ pub fn parse(text: &str, theme_exists: &dyn Fn(&str) -> bool) -> (Config, Vec<St
             "option_as_meta" => parse_bool(value).map(|v| config.option_as_meta = v).is_some(),
             "copy_on_select" => parse_bool(value).map(|v| config.copy_on_select = v).is_some(),
             "confirm_paste" => parse_bool(value).map(|v| config.confirm_paste = v).is_some(),
+            "shell" => {
+                config.shell = (!value.is_empty()).then(|| value.to_string());
+                true
+            }
+            "assist_hook" => parse_bool(value).map(|v| config.assist_hook = v).is_some(),
+            "assist_model" => crate::assist::MODELS.iter().find(|m| m.id == value).map(|m| config.assist_model = m.id.into()).is_some(),
             _ => {
                 // Colour keys are checked against a scratch theme, then kept as text.
                 let mut scratch = Theme::by_name("glass-dark").unwrap();
@@ -348,7 +368,7 @@ mod tests {
 
     #[test]
     fn reads_all_keys() {
-        let text = "# mine\n[glyphium]\nfont_size = 15.5\ntheme = \"graduation\"  # loud\nscrollback=500\nfont_family = \"SF Mono\"\nline_height = 1.4\ntheme_light = solarized-light\ntheme_dark = dracula\nopacity = 0.75\nblur = off\npadding = 12\nwindow_columns = 120\nwindow_rows = 40\ncursor_style = bar\ncursor_blink = false\noption_as_meta = yes\ncopy_on_select = true\nconfirm_paste = false\nbackground = #101010 # dark\npalette = 4=#3366ff\n";
+        let text = "# mine\n[glyphium]\nfont_size = 15.5\ntheme = \"graduation\"  # loud\nscrollback=500\nfont_family = \"SF Mono\"\nline_height = 1.4\ntheme_light = solarized-light\ntheme_dark = dracula\nopacity = 0.75\nblur = off\npadding = 12\nwindow_columns = 120\nwindow_rows = 40\ncursor_style = bar\ncursor_blink = false\noption_as_meta = yes\ncopy_on_select = true\nconfirm_paste = false\nbackground = #101010 # dark\npalette = 4=#3366ff\nshell = fish\nassist_hook = off\nassist_model = k2-system1\n";
         let (c, w) = parse(text, &builtin);
         assert!(w.is_empty(), "{w:?}");
         assert_eq!(
@@ -372,8 +392,12 @@ mod tests {
                 copy_on_select: true,
                 confirm_paste: false,
                 scrollback: 500,
+                shell: Some("fish".into()),
+                assist_hook: false,
+                assist_model: "k2-system1".into(),
             }
         );
+        assert_eq!(parse("assist_model = gpt9", &builtin).1.len(), 1, "unknown models warn");
     }
 
     #[test]

@@ -39,6 +39,13 @@ pub enum Step {
     ExpectQueued(usize),
     /// Opens the queue prompt, as its shortcut does.
     OpenQueue,
+    /// Opens the assistant, as its shortcut does.
+    OpenAsk,
+    /// The assistant's step: typing, thinking, confirm, offer, downloading, message or closed.
+    ExpectAsk(String),
+    /// The text in the open popover's field.
+    ExpectPromptText(String),
+    ExpectCheatsheet(bool),
     /// Input to the open queue prompt.
     Prompt(crate::PromptInput),
     /// `auto`, `default` or a theme name.
@@ -115,6 +122,14 @@ pub fn parse(source: &str) -> Vec<Step> {
                 "expect-idle" => Step::ExpectIdle(if arg.is_empty() { None } else { Some(arg.parse().expect("expect-idle [DRAWS]")) }),
                 "queue" => Step::Queue(unescape(arg)),
                 "open-queue" => Step::OpenQueue,
+                "open-ask" => Step::OpenAsk,
+                "expect-ask" => Step::ExpectAsk(arg.into()),
+                "expect-prompt-text" => Step::ExpectPromptText(unescape(arg)),
+                "expect-cheatsheet" => Step::ExpectCheatsheet(match arg {
+                    "open" => true,
+                    "closed" => false,
+                    _ => panic!("expect-cheatsheet open|closed"),
+                }),
                 "prompt-type" => Step::Prompt(crate::PromptInput::Text(unescape(arg))),
                 "prompt-paste" => Step::Prompt(crate::PromptInput::Paste(unescape(arg))),
                 "prompt-key" => Step::Prompt(match arg {

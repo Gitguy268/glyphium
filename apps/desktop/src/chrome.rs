@@ -32,6 +32,8 @@ pub enum Hit {
     SettingsDone,
     SettingsCancel,
     Scrim,
+    /// Anywhere on the cheatsheet or the dimmed window around it: closes it.
+    CloseCheatsheet,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -62,6 +64,23 @@ pub struct PromptInfo {
     pub waiting: Vec<String>,
     /// The queue is off: the pane runs a program that is not a shell.
     pub unsupported: bool,
+    /// Set when the popover is the assistant instead of the queue.
+    pub ask: Option<AskInfo>,
+}
+
+/// What the assistant popover shows for its current step.
+pub struct AskInfo {
+    pub heading: String,
+    /// A quiet note at the right of the heading.
+    pub side: String,
+    pub placeholder: String,
+    /// Lines under the field: what the command does, a message, the download offer.
+    pub notes: Vec<String>,
+    /// Risky parts of the command, shown in red.
+    pub warnings: Vec<String>,
+    /// Download progress, 0 to 1.
+    pub progress: Option<f32>,
+    pub hints: String,
 }
 
 pub struct SettingsInfo {
@@ -98,7 +117,12 @@ pub struct Input {
     /// Gaps between split panes, in pixels, to draw as hairlines.
     pub dividers: Vec<Area>,
     pub settings: Option<SettingsInfo>,
+    /// Help → Cheatsheet: groups of (keys, what they do).
+    pub cheatsheet: Option<Vec<CheatGroup>>,
 }
+
+/// A cheatsheet heading and its (keys, what they do) rows.
+pub type CheatGroup = (String, Vec<(String, String)>);
 
 pub struct Chrome {
     pub shapes: Vec<Shape>,
@@ -274,7 +298,13 @@ pub fn layout(input: &Input, measure: &mut dyn FnMut(&str, f32, bool) -> f32) ->
     }
 
     if let Some(p) = &input.prompt {
-        popover(input, p, queue, &mut shapes, &mut hits, measure);
+        match &p.ask {
+            Some(a) => ask_popover(input, p, a, queue, &mut shapes, &mut hits, measure),
+            None => popover(input, p, queue, &mut shapes, &mut hits, measure),
+        }
+    }
+    if let Some(groups) = &input.cheatsheet {
+        cheatsheet_panel(input, groups, &mut shapes, &mut hits, measure);
     }
     if let Some(st) = &input.settings {
         settings_panel(input, st, &mut shapes, &mut hits, measure);
@@ -360,6 +390,179 @@ fn settings_panel(input: &Input, st: &SettingsInfo, shapes: &mut Vec<Shape>, hit
     hits.push((done, Hit::SettingsDone));
     let hint = "esc cancels   ↩ saves";
     shapes.push(Shape::Text { x: x + pad, y: cy + (bh - line(small)) / 2.0, text: hint.into(), size_px: small, bold: false, ui: true, color: ink(0.4) });
+}
+
+/// Words wrapped into lines of at most `max` pixels; at most `limit` lines, the last shortened.
+fn wrap(text: &str, max: f32, size: f32, limit: usize, measure: &mut dyn FnMut(&str, f32, bool) -> f32) -> Vec<String> {
+    let mut lines: Vec<String> = vec![];
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if current.is_empty() { word.to_string() } else { format!("{current} {word}") };
+        if measure(&candidate, size, false) <= max || current.is_empty() {
+            current = candidate;
+        } else {
+            lines.push(std::mem::replace(&mut current, word.to_string()));
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.len() > limit {
+        let rest = lines[limit - 1..].join(" ");
+        lines.truncate(limit - 1);
+        lines.push(rest);
+    }
+    lines.into_iter().map(|l| fit(&l, max, size, false, measure)).collect()
+}
+
+/// The assistant under the Queue button: heading, the request or the command to confirm, then
+/// notes, warnings in red, download progress and key hints.
+#[allow(clippy::too_many_arguments)]
+fn ask_popover(input: &Input, p: &PromptInfo, a: &AskInfo, anchor: Area, shapes: &mut Vec<Shape>, hits: &mut Vec<(Area, Hit)>, measure: &mut dyn FnMut(&str, f32, bool) -> f32) {
+    let s = input.scale;
+    let (bg, fg) = (input.background, input.foreground);
+    let ink = |a: f32| color(fg, a);
+    let small = SMALL_PT * s;
+    let ui = UI_PT * s;
+    let mono = 13.0 * s;
+    let mono_w = |t: &str, size: f32| t.chars().count() as f32 * size * 0.6;
+    let line = ui_line_height;
+    let pad = 14.0 * s;
+    let w = (560.0 * s).min(input.width - 16.0 * s);
+    let x = (anchor.x + anchor.w - w).max(8.0 * s);
+    let y = anchor.y + anchor.h + 8.0 * s;
+    let field_h = 32.0 * s;
+    let room = w - 2.0 * pad;
+    let notes: Vec<String> = a.notes.iter().flat_map(|n| wrap(n, room, ui, 3, measure)).collect();
+    let warnings: Vec<String> = a.warnings.iter().map(|w| fit(&format!("⚠ {w}"), room, ui, false, measure)).collect();
+    let mut h = pad + line(small) + 8.0 * s + field_h + 10.0 * s;
+    h += (notes.len() + warnings.len()) as f32 * line(ui);
+    if !notes.is_empty() || !warnings.is_empty() {
+        h += 8.0 * s;
+    }
+    if a.progress.is_some() {
+        h += 14.0 * s;
+    }
+    h += line(small) + pad;
+    let panel = mix(bg, fg, 0.07);
+    shapes.push(Shape::Rect { x: x - 1.0 * s, y: y + 4.0 * s, w: w + 2.0 * s, h, radius: 14.0 * s, color: [0.0, 0.0, 0.0, 0.22] });
+    shapes.push(Shape::Rect { x, y, w, h, radius: 14.0 * s, color: color(panel, 1.0) });
+    shapes.push(Shape::Ring { x, y, w, h, radius: 14.0 * s, width: s.max(1.0), color: ink(0.14) });
+    hits.push((Area { x, y, w, h }, Hit::Popover));
+
+    let mut cy = y + pad;
+    shapes.push(Shape::Text { x: x + pad, y: cy, text: a.heading.clone(), size_px: small, bold: true, ui: true, color: ink(0.6) });
+    let sw = measure(&a.side, small, false);
+    if !a.side.is_empty() && sw + measure(&a.heading, small, true) + 3.0 * pad < w {
+        shapes.push(Shape::Text { x: x + w - pad - sw, y: cy, text: a.side.clone(), size_px: small, bold: false, ui: true, color: ink(0.38) });
+    }
+    cy += line(small) + 8.0 * s;
+
+    let fx = x + pad;
+    let fw = w - 2.0 * pad;
+    shapes.push(Shape::Rect { x: fx, y: cy, w: fw, h: field_h, radius: 8.0 * s, color: color(bg, 0.9) });
+    shapes.push(Shape::Ring { x: fx - 2.0 * s, y: cy - 2.0 * s, w: fw + 4.0 * s, h: field_h + 4.0 * s, radius: 10.0 * s, width: 2.5 * s, color: color(input.accent, 0.75) });
+    let mark = "? ";
+    let mw = mono_w(mark, mono);
+    let field_room = fw - 20.0 * s - mw - 4.0 * s;
+    let mut text = p.text.clone();
+    while !text.is_empty() && mono_w(&text, mono) > field_room {
+        text.remove(0);
+    }
+    let ty = cy + (field_h - line(mono)) / 2.0;
+    shapes.push(Shape::Text { x: fx + 10.0 * s, y: ty, text: mark.into(), size_px: mono, bold: true, ui: false, color: color(input.accent, 1.0) });
+    let text_w = mono_w(&text, mono);
+    if text.is_empty() {
+        shapes.push(Shape::Text { x: fx + 10.0 * s + mw, y: ty, text: a.placeholder.clone(), size_px: mono, bold: false, ui: false, color: ink(0.25) });
+    } else {
+        shapes.push(Shape::Text { x: fx + 10.0 * s + mw, y: ty, text, size_px: mono, bold: false, ui: false, color: ink(0.95) });
+    }
+    shapes.push(Shape::Rect { x: fx + 10.0 * s + mw + text_w + 1.0 * s, y: cy + 7.0 * s, w: 2.0 * s, h: field_h - 14.0 * s, radius: 1.0 * s, color: color(input.accent, 1.0) });
+    cy += field_h + 10.0 * s;
+
+    for n in notes {
+        shapes.push(Shape::Text { x: x + pad, y: cy, text: n, size_px: ui, bold: false, ui: true, color: ink(0.75) });
+        cy += line(ui);
+    }
+    for wtext in warnings {
+        shapes.push(Shape::Text { x: x + pad, y: cy, text: wtext, size_px: ui, bold: false, ui: true, color: [1.0, 0.42, 0.38, 1.0] });
+        cy += line(ui);
+    }
+    if !a.notes.is_empty() || !a.warnings.is_empty() {
+        cy += 8.0 * s;
+    }
+    if let Some(f) = a.progress {
+        let bar_h = 6.0 * s;
+        shapes.push(Shape::Rect { x: x + pad, y: cy, w: room, h: bar_h, radius: bar_h / 2.0, color: ink(0.10) });
+        shapes.push(Shape::Rect { x: x + pad, y: cy, w: (room * f.clamp(0.0, 1.0)).max(bar_h), h: bar_h, radius: bar_h / 2.0, color: color(input.accent, 1.0) });
+        cy += 14.0 * s;
+    }
+    let hints = fit(&a.hints, room, small, false, measure);
+    shapes.push(Shape::Text { x: x + pad, y: cy, text: hints, size_px: small, bold: false, ui: true, color: ink(0.42) });
+}
+
+/// Help → Cheatsheet: groups of shortcuts in two columns over a dimmed window. Any click closes it.
+fn cheatsheet_panel(input: &Input, groups: &[CheatGroup], shapes: &mut Vec<Shape>, hits: &mut Vec<(Area, Hit)>, measure: &mut dyn FnMut(&str, f32, bool) -> f32) {
+    let s = input.scale;
+    let (bg, fg) = (input.background, input.foreground);
+    let ink = |a: f32| color(fg, a);
+    let ui = UI_PT * s;
+    let small = SMALL_PT * s;
+    let line = ui_line_height;
+    let height_px = input.window_height.max(200.0 * s);
+    shapes.push(Shape::Rect { x: 0.0, y: 0.0, w: input.width, h: height_px, radius: 0.0, color: [0.0, 0.0, 0.0, 0.32] });
+    hits.push((Area { x: 0.0, y: 0.0, w: input.width, h: height_px }, Hit::CloseCheatsheet));
+
+    let pad = 18.0 * s;
+    let w = (760.0 * s).min(input.width - 24.0 * s);
+    let two = w > 560.0 * s;
+    let col_w = if two { (w - 3.0 * pad) / 2.0 } else { w - 2.0 * pad };
+    let row_h = line(ui) + 4.0 * s;
+    let group_h = |g: &CheatGroup| line(small) + 6.0 * s + g.1.len() as f32 * row_h + 14.0 * s;
+    // Fill the left column first, moving on once it holds about half.
+    let total: f32 = groups.iter().map(group_h).sum();
+    let mut columns: [Vec<usize>; 2] = [vec![], vec![]];
+    let mut left_h = 0.0;
+    for (i, g) in groups.iter().enumerate() {
+        if !two || left_h + group_h(g) / 2.0 <= total / 2.0 || columns[0].is_empty() {
+            columns[0].push(i);
+            left_h += group_h(g);
+        } else {
+            columns[1].push(i);
+        }
+    }
+    let col_h = |c: &[usize]| c.iter().map(|&i| group_h(&groups[i])).sum::<f32>();
+    let head = line(ui * 1.25) + 12.0 * s;
+    let h = pad + head + col_h(&columns[0]).max(col_h(&columns[1])) + line(small) + pad;
+    let x = (input.width - w) / 2.0;
+    let y = ((height_px - h) / 2.0).max(8.0 * s);
+    let panel = mix(bg, fg, 0.06);
+    shapes.push(Shape::Rect { x: x - 2.0 * s, y: y + 6.0 * s, w: w + 4.0 * s, h, radius: 16.0 * s, color: [0.0, 0.0, 0.0, 0.25] });
+    shapes.push(Shape::Rect { x, y, w, h, radius: 16.0 * s, color: color(panel, 1.0) });
+    shapes.push(Shape::Ring { x, y, w, h, radius: 16.0 * s, width: s.max(1.0), color: ink(0.14) });
+    shapes.push(Shape::Text { x: x + pad, y: y + pad, text: "Cheatsheet".into(), size_px: ui * 1.25, bold: true, ui: true, color: ink(0.95) });
+    let top = y + pad + head;
+    let keys_w = (col_w * 0.38).min(170.0 * s);
+    for (c, col) in columns.iter().enumerate() {
+        let cx = x + pad + c as f32 * (col_w + pad);
+        let mut cy = top;
+        for &i in col {
+            let (title, rows) = &groups[i];
+            shapes.push(Shape::Text { x: cx, y: cy, text: title.to_uppercase(), size_px: small, bold: true, ui: true, color: ink(0.5) });
+            cy += line(small) + 6.0 * s;
+            for (keys, what) in rows {
+                let k = fit(keys, keys_w - 8.0 * s, ui, true, measure);
+                shapes.push(Shape::Text { x: cx, y: cy, text: k, size_px: ui, bold: true, ui: true, color: color(input.accent, 1.0) });
+                let wtext = fit(what, col_w - keys_w, ui, false, measure);
+                shapes.push(Shape::Text { x: cx + keys_w, y: cy, text: wtext, size_px: ui, bold: false, ui: true, color: ink(0.8) });
+                cy += row_h;
+            }
+            cy += 14.0 * s;
+        }
+    }
+    let hint = "esc or click to close";
+    let hw = measure(hint, small, false);
+    shapes.push(Shape::Text { x: x + w - pad - hw, y: y + h - pad - line(small), text: hint.into(), size_px: small, bold: false, ui: true, color: ink(0.4) });
 }
 
 /// Black or white, whichever reads better on the accent colour.
@@ -482,7 +685,47 @@ mod tests {
             opacity: 0.8,
             dividers: vec![],
             settings: None,
+            cheatsheet: None,
         }
+    }
+
+    #[test]
+    fn ask_popover_shows_notes_warnings_and_progress_and_stays_on_screen() {
+        let mut i = input(1);
+        i.prompt = Some(PromptInfo {
+            text: "rm -rf build".into(),
+            waiting: vec![],
+            unsupported: false,
+            ask: Some(AskInfo {
+                heading: "Run this command?".into(),
+                side: "you can edit it".into(),
+                placeholder: String::new(),
+                notes: vec!["word ".repeat(200)],
+                warnings: vec!["deletes files without asking (rm -r / -f)".into()],
+                progress: Some(0.5),
+                hints: "↩ Run    esc Cancel".into(),
+            }),
+        });
+        let c = layout(&i, &mut measure);
+        let pop = c.area(Hit::Popover).expect("popover");
+        assert!(pop.x >= 0.0 && pop.x + pop.w <= i.width);
+        let texts: Vec<&str> = c.shapes.iter().filter_map(|s| if let Shape::Text { text, .. } = s { Some(text.as_str()) } else { None }).collect();
+        assert!(texts.iter().any(|t| t.starts_with("⚠ deletes")));
+        let note_lines = texts.iter().filter(|t| t.starts_with("word")).count();
+        assert_eq!(note_lines, 3, "long notes wrap to at most three lines");
+        for t in &texts {
+            assert!(measure(t, SMALL_PT * 2.0, false) <= pop.w + 1.0 || t.chars().all(|c| c == 'x'), "text fits: {t}");
+        }
+    }
+
+    #[test]
+    fn cheatsheet_covers_the_window_and_closes_on_click() {
+        let mut i = input(1);
+        i.cheatsheet = Some(crate::assist::cheatsheet().into_iter().map(|(t, rows)| (t.to_string(), rows.into_iter().map(|(k, w)| (k, w.to_string())).collect())).collect());
+        let c = layout(&i, &mut measure);
+        assert_eq!(c.hit(5.0, 999.0), Some(Hit::CloseCheatsheet));
+        assert_eq!(c.hit(800.0, 500.0), Some(Hit::CloseCheatsheet));
+        assert!(c.shapes.iter().any(|s| matches!(s, Shape::Text { text, .. } if text == "Cheatsheet")));
     }
 
     #[test]
@@ -524,7 +767,7 @@ mod tests {
     fn popover_sits_under_the_queue_button_and_on_top() {
         let mut i = input(1);
         i.queued = 3;
-        i.prompt = Some(PromptInfo { text: "echo hi".into(), waiting: (0..9).map(|n| format!("cmd {n}")).collect(), unsupported: false });
+        i.prompt = Some(PromptInfo { text: "echo hi".into(), waiting: (0..9).map(|n| format!("cmd {n}")).collect(), unsupported: false, ask: None });
         let c = layout(&i, &mut measure);
         let q = c.area(Hit::Queue).unwrap();
         let pop = c.area(Hit::Popover).unwrap();
@@ -542,7 +785,7 @@ mod tests {
         let mut i = input(4);
         i.width = 300.0;
         i.title = "a very long title that cannot possibly fit in this narrow window".into();
-        i.prompt = Some(PromptInfo { text: "x".repeat(500), waiting: vec![], unsupported: false });
+        i.prompt = Some(PromptInfo { text: "x".repeat(500), waiting: vec![], unsupported: false, ask: None });
         i.toast = Some("y".repeat(300));
         let c = layout(&i, &mut measure);
         for s in &c.shapes {

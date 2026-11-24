@@ -1,0 +1,19 @@
+# shell: zsh
+# Without a downloaded model, a question the recipes can't answer offers the download and
+# downloads nothing until Enter.
+wait 1500
+open-ask
+prompt-type show disk usage of this folder
+prompt-key Enter
+expect-ask offer
+screenshot assist-offer.png
+prompt-key Escape
+expect-prompt closed
+# A recipe still answers without any model.
+open-ask
+prompt-type install fish
+prompt-key Enter
+expect-ask confirm
+expect-prompt-text brew install fish
+prompt-key Escape
+quit

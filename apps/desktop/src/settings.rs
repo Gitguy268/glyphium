@@ -17,9 +17,10 @@ pub enum Row {
     Blink,
     OptionAsMeta,
     CopyOnSelect,
+    Shell,
 }
 
-pub const ROWS: [Row; 11] = [Row::Theme, Row::Font, Row::Size, Row::LineHeight, Row::Opacity, Row::Blur, Row::Padding, Row::Cursor, Row::Blink, Row::OptionAsMeta, Row::CopyOnSelect];
+pub const ROWS: [Row; 12] = [Row::Theme, Row::Font, Row::Size, Row::LineHeight, Row::Opacity, Row::Blur, Row::Padding, Row::Cursor, Row::Blink, Row::OptionAsMeta, Row::CopyOnSelect, Row::Shell];
 
 impl Row {
     pub fn label(self) -> &'static str {
@@ -35,6 +36,7 @@ impl Row {
             Row::Blink => "Cursor blink",
             Row::OptionAsMeta => "Option as Meta",
             Row::CopyOnSelect => "Copy on select",
+            Row::Shell => "Shell for new tabs",
         }
     }
 
@@ -52,6 +54,7 @@ impl Row {
             Row::Blink => "cursor_blink",
             Row::OptionAsMeta => "option_as_meta",
             Row::CopyOnSelect => "copy_on_select",
+            Row::Shell => "shell",
         }
     }
 }
@@ -69,6 +72,8 @@ pub struct Settings {
     fonts: Vec<String>,
     /// The theme's suggested opacity: shown, and where stepping starts, when none is set.
     pub base_opacity: f32,
+    /// Shell choices; the empty string is the login shell.
+    shells: Vec<String>,
 }
 
 fn cycle<T: PartialEq + Clone>(list: &[T], current: &T, dir: i32) -> T {
@@ -97,7 +102,19 @@ impl Settings {
         {
             font_list.push(f.clone());
         }
-        Self { row: 0, draft: config.clone(), original: config.clone(), theme: theme.to_string(), original_theme: theme.to_string(), themes, fonts: font_list, base_opacity }
+        let mut shells = vec![String::new()];
+        shells.extend(config.shell.clone());
+        Self { row: 0, draft: config.clone(), original: config.clone(), theme: theme.to_string(), original_theme: theme.to_string(), themes, fonts: font_list, base_opacity, shells }
+    }
+
+    /// Adds the shells found on this computer (names like `zsh` or `fish`) to the Shell row.
+    pub fn with_shells(mut self, found: impl IntoIterator<Item = String>) -> Self {
+        for s in found {
+            if !self.shells.contains(&s) {
+                self.shells.push(s);
+            }
+        }
+        self
     }
 
     pub fn current(&self) -> Row {
@@ -135,6 +152,10 @@ impl Settings {
             Row::Blink => d.cursor_blink = cycle(&[None, Some(true), Some(false)], &d.cursor_blink, dir),
             Row::OptionAsMeta => d.option_as_meta = !d.option_as_meta,
             Row::CopyOnSelect => d.copy_on_select = !d.copy_on_select,
+            Row::Shell => {
+                let next = cycle(&self.shells, &d.shell.clone().unwrap_or_default(), dir);
+                d.shell = (!next.is_empty()).then_some(next);
+            }
         }
     }
 
@@ -159,6 +180,7 @@ impl Settings {
             Row::Blink => d.cursor_blink.map_or("Default".into(), |b| on_off(b).into()),
             Row::OptionAsMeta => on_off(d.option_as_meta).into(),
             Row::CopyOnSelect => on_off(d.copy_on_select).into(),
+            Row::Shell => d.shell.clone().unwrap_or_else(|| "Login shell".into()),
         }
     }
 
@@ -179,6 +201,7 @@ impl Settings {
                 Row::Blink => (d.cursor_blink != o.cursor_blink).then(|| d.cursor_blink.map_or("default".into(), |b| b.to_string())),
                 Row::OptionAsMeta => (d.option_as_meta != o.option_as_meta).then(|| d.option_as_meta.to_string()),
                 Row::CopyOnSelect => (d.copy_on_select != o.copy_on_select).then(|| d.copy_on_select.to_string()),
+                Row::Shell => (d.shell != o.shell).then(|| d.shell.clone().unwrap_or_default()),
             };
             if let Some(v) = value {
                 out.push((row.key(), v));
@@ -202,7 +225,7 @@ mod tests {
     fn rows_wrap() {
         let mut s = settings();
         s.move_row(-1);
-        assert_eq!(s.current(), Row::CopyOnSelect);
+        assert_eq!(s.current(), Row::Shell);
         s.move_row(1);
         assert_eq!(s.current(), Row::Theme);
     }
@@ -274,6 +297,24 @@ mod tests {
         assert_eq!(parsed.cursor_blink, Some(false));
         assert!(!parsed.blur);
         assert_eq!(parsed.font_family.as_deref(), Some("SF Mono"));
+    }
+
+    #[test]
+    fn shell_cycles_through_found_shells_and_saves() {
+        let mut s = settings().with_shells(["zsh".to_string(), "fish".to_string(), "zsh".to_string()]);
+        assert_eq!(s.value(Row::Shell, &|n| n.to_string()), "Login shell");
+        s.step_row(Row::Shell, 1);
+        assert_eq!(s.draft.shell.as_deref(), Some("zsh"));
+        s.step_row(Row::Shell, 1);
+        assert_eq!(s.draft.shell.as_deref(), Some("fish"));
+        s.step_row(Row::Shell, 1);
+        assert_eq!(s.draft.shell, None, "back to the login shell");
+        s.step_row(Row::Shell, -1);
+        let mut text = String::new();
+        for (k, v) in s.changes() {
+            text = config::set_key(&text, k, &v);
+        }
+        assert_eq!(config::parse(&text, &|_| false).0.shell.as_deref(), Some("fish"));
     }
 
     #[test]

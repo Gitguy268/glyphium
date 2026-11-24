@@ -62,10 +62,29 @@ impl AppMenu {
                 &item("queue", "Queue Next Command…", CMD_SHIFT, Some(Code::Enter)),
                 &item("clear-queue", "Clear Queue", CMD_SHIFT, Some(Code::Backspace)),
                 &sep(),
+                &item("ask", "Ask for a Command…", CMD, Some(Code::KeyK)),
+                &sep(),
                 &item("close", "Close", CMD, Some(Code::KeyW)),
             ],
         )
         .expect("shell menu");
+        // Extras: tools picked from terminals-are-sexy, one submenu per group. Each shows its
+        // install command to confirm.
+        let extras = Submenu::new("Extras", true);
+        let mut groups: Vec<&str> = vec![];
+        for e in crate::assist::EXTRAS {
+            if !groups.contains(&e.group) {
+                groups.push(e.group);
+            }
+        }
+        for g in groups {
+            let sub = Submenu::new(g, true);
+            for e in crate::assist::EXTRAS.iter().filter(|e| e.group == g) {
+                let _ = sub.append(&MenuItem::with_id(format!("extra:{}", e.name), format!("{} — {}", e.name, e.what.trim_end_matches('.')), true, None));
+            }
+            let _ = extras.append(&sub);
+        }
+        let help = Submenu::with_items("Help", true, &[&item("cheatsheet", "Cheatsheet", CMD, Some(Code::Slash))]).expect("help menu");
         let edit = Submenu::with_items("Edit", true, &[&item("copy", "Copy", CMD, Some(Code::KeyC)), &item("paste", "Paste", CMD, Some(Code::KeyV))]).expect("edit menu");
         let theme_menu = Submenu::new("Theme", true);
         let view = Submenu::with_items(
@@ -96,9 +115,10 @@ impl AppMenu {
             ],
         )
         .expect("window menu");
-        menu.append_items(&[&app, &shell, &edit, &view, &window]).expect("menu bar");
+        menu.append_items(&[&app, &shell, &edit, &view, &extras, &window, &help]).expect("menu bar");
         menu.init_for_nsapp();
         window.set_as_windows_menu_for_nsapp();
+        help.set_as_help_menu_for_nsapp();
         let mut this = Self { _menu: menu, theme_menu, theme_items: vec![] };
         this.set_themes(themes, current);
         this

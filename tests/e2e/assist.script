@@ -1,0 +1,52 @@
+# shell: zsh
+# assist-stub: CMD: du -sh /path/to/directory
+# The assistant. zsh's not-found hook opens a typo fix; recipes answer at once; the model
+# (stubbed here) answers the rest; risky commands carry warnings; nothing runs until Enter.
+wait 1500
+type PS1='$ '\r
+wait 300
+type gti stauts\r
+wait 1000
+expect-ask confirm
+expect-prompt-text git status
+screenshot assist-hook.png
+prompt-key Enter
+wait 1000
+expect-prompt closed
+expect-screen not a git repository
+# Plain English: a recipe with an exact installer, shown with a warning.
+open-ask
+expect-ask typing
+prompt-type install brew
+prompt-key Enter
+expect-ask confirm
+screenshot assist-brew.png
+prompt-key Escape
+expect-prompt closed
+# The model answers what no recipe covers; its placeholder folder becomes ".".
+open-ask
+prompt-type show disk usage of this folder
+prompt-key Enter
+wait 300
+expect-ask confirm
+expect-prompt-text du -sh .
+# Edits keep it a command to confirm.
+prompt-key Backspace
+prompt-type /tmp
+expect-ask confirm
+expect-prompt-text du -sh /tmp
+prompt-key Enter
+wait 1000
+expect-screen /tmp
+# Extras: the install command for one tool, to confirm.
+menu extra:htop
+expect-ask confirm
+expect-prompt-text brew install htop
+prompt-key Escape
+# Help → Cheatsheet, then the same item again closes it.
+menu action:cheatsheet
+expect-cheatsheet open
+screenshot cheatsheet.png
+menu action:cheatsheet
+expect-cheatsheet closed
+quit

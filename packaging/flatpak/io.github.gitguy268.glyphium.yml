@@ -14,6 +14,8 @@ finish-args:
   # A terminal runs your host shell: host-spawn starts it through the Flatpak portal.
   - --talk-name=org.freedesktop.Flatpak
   - --filesystem=xdg-config/glyphium
+  # Only for downloading the command assistant's model, when you ask for it.
+  - --share=network
 modules:
   - name: glyphium
     buildsystem: simple

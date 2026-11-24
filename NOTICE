@@ -55,6 +55,28 @@ Themes (crates/terminal-core/src/theme.rs):
 Linked into the macOS app:
   muda 0.21 (tauri-apps/muda): Apache-2.0 OR MIT. The native menu bar.
 
+Linked into the desktop app (the assist-model feature, on by default):
+  llama-cpp-2 and llama-cpp-sys-2 0.1.161 (utilityai/llama-cpp-rs): MIT OR Apache-2.0.
+  llama.cpp and ggml, built from source by llama-cpp-sys-2: Copyright (c) 2023-2026 The ggml
+  authors, MIT.
+
+Downloaded only when you ask the assistant and confirm (not bundled or redistributed):
+  Qwen2.5-Coder 0.5B NL2Bash GGUF (burhan2753y/qwen2.5-coder-0.5b-nl2bash-gguf), fine-tuned from
+  Qwen/Qwen2.5-Coder-0.5B-Instruct: Apache-2.0.
+  Qwen2.5-Coder 0.5B Instruct GGUF (Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF), Alibaba Cloud:
+  Apache-2.0.
+  K2-Horizon 0.9B System 1 GGUF (Lucasgitguy-co/K2-Horizon-0.9B-System1-GGUF), from
+  IFM/K2-Horizon-0.9B: Apache-2.0.
+
+Installed only if you choose them in Extras or the assistant and confirm the command:
+  Homebrew, oh-my-fish (MIT), oh-my-zsh (MIT), Fisher (MIT), fish (GPL-2.0), zsh and the other
+  Extras run their own installers or come from your package manager. Glyphium includes none of
+  their code; it shows the command and types it into your shell when you press Enter.
+
+Lists used:
+  The Extras menu (apps/desktop/src/assist.rs): the choice of tools, their links and some
+  descriptions come from k4m4/terminals-are-sexy, CC0-1.0 (public domain dedication).
+
 Fonts read at run time, never bundled:
   SF Mono and the macOS system font belong to Apple. Glyphium loads them from the user's own
   system when asked to (font_family = "SF Mono") and for the window chrome; they are not
@@ -62,3 +84,5 @@ Fonts read at run time, never bundled:
 
 Ideas, no code:
   VTE, GNOME Terminal, Ptyxis: LGPL-3.0 / GPL-3.0. Behaviour comparison only.
+  0nn0/terminal-mac-cheatsheet: no licence. The Cheatsheet follows its idea of a short list of the
+  most used commands and shortcuts; none of its text was copied.

@@ -53,7 +53,7 @@ The Linux build is new and only checked in CI. Your shell runs on the host throu
 <!-- run-steps:start -->
 ## Run it locally, step by step
 
-1. **Install [Rust](https://rustup.rs)** and [Zig](https://ziglang.org/download/), which builds the terminal core.
+1. **Install [Rust](https://rustup.rs)**, [Zig](https://ziglang.org/download/), which builds the terminal core, and [CMake](https://cmake.org), which builds llama.cpp for the command assistant (`brew install zig cmake` on a Mac).
 
 2. **Get the code:**
 
@@ -76,7 +76,7 @@ The Linux build is new and only checked in CI. Your shell runs on the host throu
    cargo run --release -p glyphium
    ```
 
-5. **Quit** by closing the window. The first build takes several minutes.
+5. **Quit** by closing the window. The first build takes several minutes. To build without the assistant's model runner (no CMake needed), use `cargo run --release -p glyphium --no-default-features`; recipes and typo fixes still work.
 <!-- run-steps:end -->
 
 ## Using it
@@ -108,6 +108,32 @@ Limits:
 </details>
 
 <p align="center"><img src="docs/images/queue.webp" alt="The queue popover under the Queue button, with two commands waiting" width="800"></p>
+
+### Ask for a command
+
+<p align="center"><img src="docs/images/ask-demo.webp" alt="A mistyped git command fixed after zsh can't find it, then a plain-English request answered by the model" width="800"></p>
+
+Press **Cmd+K** (or **Shell › Ask for a Command…**) and type what you want, such as `find files bigger than 100MB`, or a command you got wrong, such as `gti stauts`. Glyphium shows one command you can edit. A red line warns about risky parts such as `sudo`, `rm -rf` or a script piped from the internet. **Enter** runs it, through the same queue as above, so it waits for the shell to be free. **Esc** cancels. Nothing runs on its own.
+
+When zsh or fish can't find a command, the same popover opens with a fix. Glyphium adds the hook itself and leaves your own files alone: zsh still reads your `.zshenv`, `.zprofile` and `.zshrc`, and a `command_not_found_handler` you define wins. For bash 4 or newer, add `source ~/.config/glyphium/shell/glyphium.bash` to `~/.bashrc`. macOS's own bash 3.2 has no such hook. Turn it off with `assist_hook = false`.
+
+Answers come from three places, in this order:
+
+1. **Recipes** for things a small model gets wrong: `install brew` (Homebrew's official installer), oh-my-fish, oh-my-zsh, `update everything`, switching shells, and every tool in the Extras menu. Each uses the right package name for Homebrew, apt, apk, dnf or pacman.
+2. **Typo fixes** for command names and for the subcommands of git, brew, apt, npm, docker, pip and cargo. Commands that exist on your `PATH` are left alone.
+3. **A small language model**, run on this computer with llama.cpp. The first time it's needed, Glyphium asks before downloading it (531 MB) into `~/.config/glyphium/models`. After that it answers in well under a second. Nothing you type leaves the computer.
+
+The default model is [Qwen2.5-Coder 0.5B NL2Bash](https://huggingface.co/burhan2753y/qwen2.5-coder-0.5b-nl2bash-gguf) (Apache-2.0). It scored best of three candidates on [TabShell](https://github.com/Gitguy268/tabshell)'s 42-case eval: 40/42 with recipes and typo fixes in front. `assist_model` switches to `qwen-coder` (Qwen2.5-Coder 0.5B Instruct) or `k2-system1` (K2-Horizon 0.9B System 1). [kev-0.8b](https://huggingface.co/jaredpalmer/kev-0.8b) was considered, but it picks between given answers and can't write a command.
+
+<p align="center"><img src="docs/images/ask.webp" alt="The assistant offering Homebrew's installer, with a warning that it runs a script from the internet" width="800"></p>
+
+### Shells, Extras and the cheatsheet
+
+- **Shell for new tabs:** Settings has a **Shell for new tabs** row: your login shell, or zsh, bash or fish when they're installed. The config key is `shell`.
+- **Extras menu:** tools from [terminals-are-sexy](https://github.com/k4m4/terminals-are-sexy), including fish, oh-my-fish, Fisher, oh-my-zsh, zsh-autosuggestions, fzf, zoxide, ripgrep and tmux. Choosing one shows its install command in the assistant popover, to confirm.
+- **Help › Cheatsheet (Cmd+/):** Glyphium's shortcuts, command-line editing and a few macOS commands.
+
+<p align="center"><img src="docs/images/cheatsheet.webp" alt="The cheatsheet: Glyphium shortcuts, command-line keys, files and macOS commands in two columns" width="800"></p>
 
 ### Themes
 
@@ -168,6 +194,9 @@ You can also edit the file in any editor: **Glyphium › Open Config File** crea
 | `copy_on_select` | `false` | Copy a selection when the mouse is released |
 | `confirm_paste` | `true` | Ask before a multi-line paste that may run commands |
 | `scrollback` | `10000` | Lines per pane |
+| `shell` | your login shell | Shell for new tabs: `zsh`, `bash`, `fish` or a path |
+| `assist_hook` | `true` | Offer a fix when zsh or fish can't find a command |
+| `assist_model` | `nl2bash` | `nl2bash`, `qwen-coder` or `k2-system1`, downloaded on first use |
 
 Glyphium reads `--config FILE` first, then `$GLYPHIUM_CONFIG`, then `config.toml` in `$GLYPHIUM_CONFIG_DIR` or `~/.config/glyphium`. A program can still change the cursor shape; `cursor_style` is the shape a new pane starts with, and a program that resets the cursor gets Ghostty's default block.
 
@@ -175,7 +204,7 @@ Glyphium reads `--config FILE` first, then `$GLYPHIUM_CONFIG`, then `config.toml
 
 ### Window and menus
 
-The title bar is drawn in the terminal's own colours behind the traffic lights, like the Terminal app's. With more than one tab, the tabs show as pills on a second row: click one to switch, hover for its close button, or use **+** for a new tab. Drag empty title bar space to move the window, and double-click it to zoom. The macOS menu bar has every action, with its shortcut, under Glyphium, Shell, Edit, View and Window.
+The title bar is drawn in the terminal's own colours behind the traffic lights, like the Terminal app's. With more than one tab, the tabs show as pills on a second row: click one to switch, hover for its close button, or use **+** for a new tab. Drag empty title bar space to move the window, and double-click it to zoom. The macOS menu bar has every action, with its shortcut, under Glyphium, Shell, Edit, View, Extras, Window and Help.
 
 <details>
 <summary>All shortcuts</summary>
@@ -196,6 +225,8 @@ On Linux and Windows, use Ctrl+Shift where macOS uses Cmd (the theme shortcut is
 | Cmd+Shift+Enter | Queue the next command |
 | Cmd+Shift+Backspace | Clear the queue |
 | Cmd+Shift+T | Next theme |
+| Cmd+K | Ask for a command |
+| Cmd+/ | Cheatsheet |
 | Cmd+, | Settings |
 | Cmd+click | Open a link |
 | Cmd+Q | Quit |
@@ -209,7 +240,14 @@ cargo test --release -p glyphium-terminal-core -p glyphium-terminal-render -p gl
 cargo build --release -p glyphium && tests/e2e/run.sh OUT_DIR   # opens a real window per script
 ```
 
-Each e2e script gets its own empty settings folder, so your own `~/.config/glyphium` is never read or written.
+Each e2e script gets its own empty settings folder, so your own `~/.config/glyphium` is never read or written. A script whose first lines say `# shell: zsh` runs zsh with that folder as `HOME`, and `# assist-stub: REPLY` stands in for the model.
+
+To check the real model, point a test at a downloaded GGUF:
+
+```sh
+GLYPHIUM_TEST_MODEL=~/.config/glyphium/models/qwen2.5-coder-0.5b-bash-gguf.gguf \
+  cargo test --release -p glyphium real_model -- --ignored --nocapture
+```
 
 CI runs the first line and clippy on macOS for every push and pull request.
 

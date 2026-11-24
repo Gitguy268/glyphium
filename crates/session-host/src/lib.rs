@@ -30,6 +30,12 @@ pub struct Profile {
     pub env: HashMap<String, String>,
 }
 
+/// The program a session with no command runs: `$SHELL` if it's executable, else the user's
+/// entry in the password database (an app opened from Finder or the Dock may have no `$SHELL`).
+pub fn default_shell() -> String {
+    CommandBuilder::new_default_prog().get_shell()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Dimensions {
     pub cols: u16,
